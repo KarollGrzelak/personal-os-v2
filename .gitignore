@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Editor settings
+.vscode/
+.idea/
+
+# Internal AI/development state
+PROJECT_STATE.md
+PROJECT_STATE_*.md
+
+# Historical Personal OS builds
+personal-os-v2_*.html

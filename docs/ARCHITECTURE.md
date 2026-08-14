@@ -1,106 +1,179 @@
-# Architecture
+# Personal OS v2 architecture
 
 ## Overview
 
-Personal OS v2 is a client-only, single-page application delivered as `index.html`. It has no build-time dependencies and no backend. HTML, CSS, and JavaScript are kept together while the project is still in its incremental prototype stage.
+Personal OS v2 is currently a single-page, single-file browser application. HTML, CSS, application state management, domain engines, modules, validation, migrations, and backup logic are contained in `index.html`.
 
-User data stays in the browser and is persisted through `localStorage` under the `v2:` key prefix.
+The system is local-first:
 
-## Core services
+```text
+UI and modules
+      |
+shared engines
+      |
+Store + EventBus
+      |
+browser localStorage
+```
 
-### Store
+There is no backend, user account, cloud database, or automatic synchronization.
 
-`Store` is the only persistent storage interface used by the application. It maintains an in-memory cache backed by `localStorage`.
-
-Normal writes preserve the application's original tolerant behavior. Backup imports use strict writes: serialization and persistent storage must succeed before the cache is updated. Strict writes can also suppress individual change events during a multi-namespace import.
-
-`MemoryStore` implements the same `get`/`set` contract without touching persistent storage. It is used to migrate and validate imported backups in isolation.
+## Core
 
 ### EventBus
 
-`EventBus` provides synchronous publish/subscribe communication. Modules emit state changes without directly calling one another. A successful backup import emits one aggregate completion event after every namespace has been committed.
+`EventBus` provides small, explicit notifications such as `store:change`, `route:change`, and `backup:importCompleted`. Domain logic should remain in engines and modules rather than being hidden inside event handlers.
 
-### Router
+### Store
 
-`Router` switches application views without reloading the page. Navigation targets are built from core views and registered modules.
+`Store` is the only normal persistence gateway. It owns JSON serialization, the in-memory cache, the `v2:` localStorage prefix, and change events.
+
+`Store.set(key, value, opts)` supports two import-oriented options:
+
+- `strict: true` propagates serialization or localStorage write failures;
+- `silent: true` suppresses the individual `store:change` event.
+
+Calls without options retain the original behavior. A successful write follows this order: serialize, write to localStorage, update the cache, then optionally emit an event.
+
+`createMemoryStore()` implements the Store interface in memory without localStorage or EventBus. Backup import uses it as an isolated staging area.
 
 ### ModuleRegistry
 
-`ModuleRegistry` validates and stores modules. Shared planning engines consume a common task contract instead of depending on concrete module implementations.
+`ModuleRegistry` registers modules and validates the shared module contract. A module exposes:
 
-## Planning engines
+- `id` and `name`;
+- `getTasks()`;
+- `getStats()`;
+- `render(container)`;
+- optional `setTaskStatus(taskId, status)`.
 
-- `DayEngine` manages daily check-in data and energy guidance.
-- `HabitEngine` evaluates habit completion and streaks.
-- `PriorityEngine` collects and orders open tasks exposed by registered modules.
-- `DecisionEngine` applies the user's time budget and completes or restores tasks through their owning modules.
-- `TrainingPlanEngine` derives a training plan from a validated training profile.
-- `RoadmapEngine` manages IT-roadmap stage status, criteria, prerequisites, and progress.
+### Router
 
-## Domain modules
+`Router` switches application views and reports route changes. It does not own module business rules.
 
-### Sandbox
+## Shared engines
 
-A small reference task module used to demonstrate and exercise the shared module contract.
+- `DayEngine` calculates daily energy from the local date and check-in data.
+- `HabitEngine` owns habit completion and streak rules.
+- `PriorityEngine` selects tasks that fit the selected time budget.
+- `DecisionEngine` combines energy, priorities, tasks, and habits for the Today view.
+- `TrainingPlanEngine` derives the training plan from the validated training profile.
+- `RoadmapEngine` owns IT roadmap stages, criteria, reconciliation, and unlocking rules.
+
+Engines communicate with modules through stable contracts and shared task records. They should not depend on a module's private storage representation.
+
+## Modules
 
 ### Training
 
-Stores a training profile, generated plan state, sessions, and exercise logs. Profile input is validated before persistence. The generated plan can adapt to available equipment, days, session duration, experience, and declared limitations.
+The Training module manages a validated profile, generated plan, session state, exercise logs, completion status, and a temporary training-load calculation used by the daily energy model.
 
-### IT learning and LessonGuide
+### IT learning
 
-The learning module exposes a linear roadmap made of stages and criteria. `RoadmapEngine` derives active and locked stages from prerequisites.
-
-LessonGuide records attach structured learning material to roadmap criteria. Imported text is treated as untrusted data and escaped during rendering. Resource links are accepted only when they use HTTP or HTTPS.
+The IT learning module manages roadmap stage statuses, criterion progress, and LessonGuide content. LessonGuide is attached content, never a task. Imported or edited guide data uses domain validation and escaped rendering. Resource URLs are revalidated at render time and accept only HTTP or HTTPS.
 
 ### School
 
-Stores school tasks, deadlines, completion state, vacation behavior, and a weekly lesson schedule. School workload contributes context and priority information to the daily plan.
+The School module manages school items, the lesson schedule, workload, and school-year/vacation behavior. School items participate in the shared task contract used by the Today view.
 
-## Persistent schema and migrations
+## Store namespaces
 
-`DATA_VERSION` identifies the current persistent schema. Migrations are keyed by their destination version and run sequentially against either `Store` during application startup or `MemoryStore` during backup staging.
+The current known namespaces are:
 
-Current schema version: `5`.
+```text
+meta:schemaVersion
+dayRecords
+habitDefs
+habitLogs
+ui:timeBudget
 
-The migration history covers task statuses, roadmap criterion records, school vacation behavior, and the formal LessonGuide model.
+training:profile
+training:sessions
+training:exerciseLogs
+
+it:stageStatuses
+it:criteriaDone
+it:lessonGuides
+it:lessonGuidesRecoveredContainer
+
+school:mode
+school:items
+school:schedule
+
+sandbox:tasks
+```
+
+Every new domain should receive its own prefix. Generic storage keys such as `data`, `state`, or `items` are intentionally avoided.
+
+## Data versioning
+
+The current schema is `DATA_VERSION = 5`.
+
+Existing migrations are additive:
+
+1. schema 1 to 2: task `done` boolean becomes a status enum;
+2. schema 2 to 3: IT criteria progress becomes `{ status, completedDate }`;
+3. schema 3 to 4: school items receive `activeDuringVacation`;
+4. schema 4 to 5: LessonGuide receives its formal validated model and recovery rules.
+
+`runMigrations(store)` accepts either the real Store or a MemoryStore. The target schema version is written only after a migration step succeeds.
 
 ## Backup architecture
 
-The backup process uses an explicit allowlist of application-owned namespaces. It never exports unrelated browser storage.
+### Envelope
 
-Import has three phases:
+Backups use this outer structure:
 
-1. Parse and envelope validation
-   - enforce a 20 MB UTF-8 size limit
-   - parse JSON
-   - reject excessive nesting and prototype-related keys
-   - validate the backup format and application version
-2. Isolated staging
-   - copy allowed namespaces into `MemoryStore`
-   - run sequential migrations
-   - normalize supported legacy state
-   - validate every namespace
-3. Transactional replace
-   - take an in-memory rollback snapshot
-   - write every namespace using strict, silent writes
-   - restore the snapshot if any write fails
-   - emit one completion event after full success
+```text
+backupFormat: "personal-os-v2-backup"
+backupVersion: 1
+appDataVersion: integer
+exportedAt: ISO timestamp
+data: known namespace values
+```
 
-Backups created by a newer application version are rejected. For schema version 5, all required namespaces must be present. The roadmap-status namespace must contain exactly the current stage identifiers with supported status values.
+Export reads only `KNOWN_NAMESPACES`. It never enumerates unrelated localStorage entries.
 
-## Security and privacy boundaries
+### Import pipeline
 
-- The application has no API keys, authentication tokens, backend, analytics, or network API calls.
-- Personal data remains in browser storage unless the user explicitly exports a backup.
-- User-controlled text rendered through HTML templates is escaped.
-- LessonGuide URLs are validated again at render time.
-- Imported JSON is size-limited, depth-limited, checked for dangerous keys, migrated in memory, and validated before persistent writes.
-- External training resources are ordinary links and use `rel="noopener"` when opened in a new tab.
+```text
+JSON file
+   |
+parse, size/depth checks, dangerous-key scan, envelope validation
+   |
+MemoryStore staging + migrations + per-namespace validation
+   |
+user confirms Replace
+   |
+in-memory rollback snapshot
+   |
+strict, silent commit to the real Store
+   | success                         | failure
+one backup:importCompleted event     restore every namespace
+```
 
-## Current limitations
+Import is Replace-only. Merge is not implemented.
 
-- Browser storage is device- and browser-profile-specific.
-- Clearing site data removes local state unless the user has exported a backup.
-- Backup import uses replace semantics; merge behavior is intentionally not defined.
-- The application is currently maintained as one HTML file. Splitting it into source modules and adding a formal build pipeline can be considered as the project grows.
+The application rejects backups from a newer app data version. A version 5 backup must include every required namespace. Its `it:stageStatuses` value must contain exactly the current roadmap stage IDs with valid statuses. Only older backups may receive an initial stage map during staging.
+
+If commit fails, rollback continues across all namespaces even if one restoration also fails. The result distinguishes a successful rollback from a failed or partial rollback so the UI cannot report false recovery.
+
+## Security boundaries
+
+- Backup size is checked before FileReader and again from UTF-8 text.
+- Maximum object nesting depth is limited.
+- `__proto__`, `constructor`, and `prototype` keys are rejected recursively.
+- Every imported namespace has a domain validator.
+- Current-version roadmap state must be complete and internally consistent.
+- User-controlled values are escaped before HTML interpolation.
+- Resource URLs are restricted to HTTP and HTTPS.
+- Private user data and backup files are excluded from the public repository.
+
+## Current constraints
+
+- The application remains one large HTML file.
+- Tests are primarily standalone logical and DOM regression harnesses rather than a formal test framework.
+- Data remains tied to the current browser unless manually exported and imported.
+- There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.
+
+Architectural changes, schema changes, and new modules require a separate bounded step, migration analysis where applicable, regression tests, and independent review before commit.

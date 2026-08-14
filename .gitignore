@@ -1,24 +1,28 @@
-# Dependencies
+# Private project context
+PROJECT_STATE.md
+CURRENT_TASK.md
+
+# Local data and exported backups
+personal-os-backup-*.json
+backups/
+
+# Historical and working builds
+personal-os-v2_*.html
+work/
+
+# Secrets and local configuration
+.env
+.env.*
+*.local
+
+# Dependencies and tooling output
 node_modules/
+coverage/
+dist/
 
-# Logs
-*.log
-
-# Temporary files
-*.tmp
-*.bak
-
-# Operating system files
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
 .DS_Store
 Thumbs.db
-
-# Editor settings
-.vscode/
-.idea/
-
-# Internal AI/development state
-PROJECT_STATE.md
-PROJECT_STATE_*.md
-
-# Historical Personal OS builds
-personal-os-v2_*.html

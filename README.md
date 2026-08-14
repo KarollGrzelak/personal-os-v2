@@ -1,65 +1,73 @@
 # Personal OS v2
 
-A privacy-first, local-first personal productivity application that combines daily planning, habits, training, school, and structured IT learning in a single browser-based system.
+Personal OS v2 is an early-stage, privacy-first personal productivity system. It combines daily planning, habits, training, school responsibilities, an IT learning roadmap, and local data management in one browser application.
 
-> Personal OS v2 is an early-stage open-source project under active development.
+The current release is a single self-contained `index.html` file. It has no backend, account system, analytics service, or cloud synchronization. Application data stays in the browser's `localStorage` unless the user explicitly exports a backup file.
+
+## Current status
+
+- Development milestone: Step 8 accepted and closed
+- Data schema: `DATA_VERSION = 5`
+- Backup format: `personal-os-v2-backup`, version 1
+- Current build: `personal-os-v2_6_2.html`, published in this repository as `index.html`
+
+The next development step has not been defined. Step 9 must not be inferred from the roadmap or started without a separate specification.
 
 ## Features
 
-- daily check-in, energy score, and time-budget-aware planning
-- cross-module task prioritization
-- habit tracking and streaks
-- configurable training plans, sessions, and exercise logs
-- school tasks, deadlines, lesson schedules, and vacation mode
-- a staged IT learning roadmap with completion criteria
-- structured LessonGuide content and reviewed learning resources
-- versioned local data migrations
-- validated backup export and transactional replace import with rollback
-
-## Privacy
-
-Personal OS stores application data in the browser's `localStorage`. The application has no backend, does not require an account, and does not upload personal data.
-
-Backup files can contain personal information entered into the application. Treat exported backups as private files and do not commit them to a public repository.
+- Daily check-in and time-budget-based task selection
+- Independent habits and streak tracking
+- Training profile, plan, sessions, and exercise logs
+- IT learning roadmap with stages, criteria, and LessonGuide content
+- School tasks, lesson schedule, and school-year/vacation modes
+- Local-first persistence through a central Store
+- Versioned data migrations from schema 1 through 5
+- Full JSON backup export
+- Validated Replace import with staging and rollback
 
 ## Run locally
 
 No build step or dependency installation is required.
 
-1. Download or clone this repository.
+1. Download or clone the repository.
 2. Open `index.html` in a modern browser.
 
-For normal development and testing, serving the directory through a small local static server is recommended.
+You can also serve the folder with any static file server, but the application does not require one.
+
+## Privacy and backups
+
+Personal OS stores potentially private information such as school items, learning progress, habits, and training history. The repository does not contain user data, and the application does not send stored data to a server.
+
+Exported backup files do contain the user's Personal OS data. They should be stored and shared with the same care as other private files.
+
+Import uses Replace semantics: a confirmed import replaces the current Personal OS state rather than merging it. The file is parsed, staged in memory, migrated, and validated before the real Store is changed. If a commit fails, the application attempts to restore every namespace from an in-memory rollback snapshot.
+
+## Security model
+
+- Backup input is treated as untrusted data.
+- Only known Store namespaces are exported and imported.
+- Backup size and nesting depth are limited.
+- Dangerous keys such as `__proto__`, `constructor`, and `prototype` are rejected.
+- Domain data is validated before import commit.
+- User-controlled values are escaped before HTML rendering.
+- LessonGuide resource links accept only `http:` and `https:` URLs.
+
+This is an early-stage project and has not received a formal third-party security audit.
 
 ## Architecture
 
-The application is delivered as a single HTML file containing its interface, styles, domain models, engines, persistence layer, modules, and backup system.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Shared components include:
+## Development workflow
 
-- `Store` and `MemoryStore`
-- `EventBus`
-- `Router`
-- `ModuleRegistry`
-- `DayEngine`, `HabitEngine`, `PriorityEngine`, and `DecisionEngine`
-- `TrainingPlanEngine` and `RoadmapEngine`
-- versioned migrations and per-namespace backup validators
+Changes follow a one-step-at-a-time process:
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
-
-## Data compatibility
-
-The current persistent application schema is:
-
-```text
-DATA_VERSION = 5
-```
-
-Older supported data is upgraded through explicit, sequential migrations. Backups from newer application versions are rejected to prevent unsafe downgrades.
-
-## Project status
-
-The repository currently represents the completed Step 8 application. The codebase is being developed incrementally, with each step reviewed before publication.
+1. define one bounded specification;
+2. implement it directly in the repository;
+3. run relevant tests and regression checks;
+4. review the diff independently;
+5. apply only the identified corrections;
+6. commit only after explicit acceptance.
 
 ## License
 

@@ -95,3 +95,47 @@ export function schoolItem(overrides = {}) {
     ...overrides
   };
 }
+
+export function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+export function backupEnvelope(api, overrides = {}) {
+  const base = cloneJson(api.exportBackup());
+  return {
+    ...base,
+    ...overrides,
+    data: overrides.data === undefined ? base.data : overrides.data
+  };
+}
+
+export function populatedBackupEnvelope(api) {
+  const envelope = backupEnvelope(api);
+  const criterionId = api.ROADMAP_STAGES[0].criteria[0].id;
+  envelope.data.dayRecords = {
+    '2026-08-20': { date: '2026-08-20', sleepHours: 8, sleepQuality: 4, energyScore: 86, trainingLoad: 20 }
+  };
+  envelope.data['training:sessions'] = {
+    'day-a:2026-08-20': { status: 'completed', completedDate: '2026-08-20' }
+  };
+  envelope.data['it:criteriaDone'] = {
+    [criterionId]: { status: 'done', completedDate: '2026-08-20' }
+  };
+  envelope.data['it:lessonGuides'] = {
+    [criterionId]: lessonGuideRecord(criterionId)
+  };
+  envelope.data['school:items'] = [{
+    id: 'synthetic-school-item',
+    type: 'homework',
+    subject: 'Synthetic subject',
+    title: 'Synthetic assignment',
+    dueDate: '2026-08-21',
+    estimatedMinutes: 30,
+    difficulty: 2,
+    notes: '',
+    status: 'todo',
+    completedDate: null,
+    activeDuringVacation: false
+  }];
+  return envelope;
+}

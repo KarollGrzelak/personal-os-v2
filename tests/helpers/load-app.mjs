@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { TextDecoder, TextEncoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 
@@ -30,7 +31,25 @@ const TEST_BRIDGE = `
   normalizeLessonGuide,
   isValidLessonGuide,
   isValidCalendarDateString,
-  isValidTimeString
+  isValidTimeString,
+  isValidResourceUrl,
+  KNOWN_NAMESPACES,
+  NAMESPACE_DEFAULTS,
+  BACKUP_MAX_BYTES,
+  BACKUP_MAX_DEPTH,
+  BACKUP_FORMAT_ID,
+  BACKUP_FORMAT_VERSION,
+  exportBackup,
+  downloadBackupFile,
+  utf8ByteLength,
+  parseAndValidateBackupFile,
+  stageAndValidateBackup,
+  commitStagedImport,
+  importBackup,
+  previewBackupFile,
+  handleBackupFileSelected,
+  renderImportError,
+  renderImportCommitFailure
 });
 `;
 
@@ -104,6 +123,35 @@ export async function loadApp({
     prompts: []
   };
   const downloads = [];
+  const anchorClicks = [];
+  const fileReaderControl = {
+    calls: [],
+    outcomes: [],
+    enqueueError(message = 'Synthetic FileReader error') {
+      this.outcomes.push({ error: new Error(message), type: 'error' });
+    },
+    enqueueSuccess(result) {
+      this.outcomes.push({ result: String(result), type: 'success' });
+    },
+    reset() {
+      this.calls.length = 0;
+      this.outcomes.length = 0;
+    }
+  };
+  const storageControl = {
+    attempts: [],
+    failurePredicate: null,
+    clearFailure() {
+      this.failurePredicate = null;
+    },
+    failWhen(predicate) {
+      this.failurePredicate = predicate;
+    },
+    reset() {
+      this.attempts.length = 0;
+      this.failurePredicate = null;
+    }
+  };
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('error', (...args) => errors.console.push(args));
   virtualConsole.on('jsdomError', error => errors.jsdom.push(error));
@@ -128,6 +176,52 @@ export async function loadApp({
       window.Math.random = () => {
         randomState = (Math.imul(1664525, randomState) + 1013904223) >>> 0;
         return randomState / 0x100000000;
+      };
+      if (typeof window.TextEncoder === 'undefined') window.TextEncoder = TextEncoder;
+      if (typeof window.TextDecoder === 'undefined') window.TextDecoder = TextDecoder;
+
+      const nativeSetItem = window.Storage.prototype.setItem;
+      window.Storage.prototype.setItem = function controlledSetItem(key, value) {
+        const attempt = {
+          index: storageControl.attempts.length + 1,
+          key: String(key),
+          value: String(value)
+        };
+        storageControl.attempts.push(attempt);
+        if (storageControl.failurePredicate?.(attempt)) {
+          throw new window.DOMException(`Synthetic localStorage failure: ${attempt.key}`, 'QuotaExceededError');
+        }
+        return nativeSetItem.call(this, key, value);
+      };
+
+      window.FileReader = class ControlledFileReader {
+        constructor() {
+          this.error = null;
+          this.onload = null;
+          this.onerror = null;
+          this.result = null;
+        }
+        readAsText(file) {
+          const outcome = fileReaderControl.outcomes.shift() ?? { result: '', type: 'success' };
+          fileReaderControl.calls.push({ file, outcome: outcome.type });
+          window.queueMicrotask(() => {
+            if (outcome.type === 'error') {
+              this.error = outcome.error;
+              this.onerror?.(new window.Event('error'));
+              return;
+            }
+            this.result = outcome.result;
+            this.onload?.(new window.Event('load'));
+          });
+        }
+      };
+
+      window.HTMLAnchorElement.prototype.click = function controlledAnchorClick() {
+        anchorClicks.push({
+          download: this.download,
+          href: this.href,
+          isConnected: this.isConnected
+        });
       };
 
       window.alert = message => dialogs.alerts.push(String(message));
@@ -172,8 +266,10 @@ export async function loadApp({
     const startupErrors = [...errors.window, ...errors.unhandledRejections, ...errors.jsdom];
     throw new AggregateError(startupErrors, 'Aplikacja nie uruchomiła adaptera testowego.');
   }
+  storageControl.reset();
 
   return {
+    anchorClicks,
     api,
     dialogs,
     document: dom.window.document,
@@ -181,6 +277,8 @@ export async function loadApp({
     downloads,
     errors,
     inspection,
+    fileReaderControl,
+    storageControl,
     window: dom.window,
     close() {
       dom.window.close();

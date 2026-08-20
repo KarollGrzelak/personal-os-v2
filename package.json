@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test": "node --test --test-isolation=none --test-concurrency=1 tests/*.test.mjs",
+    "test:watch": "node scripts/watch-tests.mjs",
     "check:index": "node scripts/check-index.mjs",
     "check": "npm run check:index && npm test"
   },

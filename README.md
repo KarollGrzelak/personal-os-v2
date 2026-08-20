@@ -6,12 +6,11 @@ The current release is a single self-contained `index.html` file. It has no back
 
 ## Current status
 
-- Development milestone: Step 8 accepted and closed
+- Application milestone: Step 8 accepted and closed
+- Quality infrastructure: repeatable Node-based tests and GitHub Actions are available for independent audit
 - Data schema: `DATA_VERSION = 5`
 - Backup format: `personal-os-v2-backup`, version 1
 - Current build: `personal-os-v2_6_2.html`, published in this repository as `index.html`
-
-The next development step has not been defined. Step 9 must not be inferred from the roadmap or started without a separate specification.
 
 ## Features
 
@@ -25,14 +24,36 @@ The next development step has not been defined. Step 9 must not be inferred from
 - Full JSON backup export
 - Validated Replace import with staging and rollback
 
-## Run locally
+## Use the application
 
-No build step or dependency installation is required.
+Normal use does not require Node.js, npm, a build step, or dependency installation.
 
 1. Download or clone the repository.
 2. Open `index.html` in a modern browser.
 
 You can also serve the folder with any static file server, but the application does not require one.
+
+## Development and tests
+
+The test environment requires exactly Node.js 24.19.0. After cloning the repository, install the locked development dependency set:
+
+```sh
+npm ci
+```
+
+Available quality commands:
+
+```sh
+npm test             # run the complete test suite once
+npm run test:watch  # rerun tests after changes in tests/, helpers, or index.html
+npm run check       # validate index.html structure and run the complete test suite
+```
+
+Tests execute the real inline application script read from `index.html` in an isolated JSDOM instance. The adapter used to expose selected symbols exists only in the in-memory document created by the test loader; the production HTML is not modified or instrumented on disk.
+
+All fixtures and test records are synthetic. Tests do not load exported user backups, real browser data, or network resources.
+
+The `Quality` GitHub Actions workflow runs `npm ci` and `npm run check` for every push and pull request using Node.js 24.19.0. JSDOM provides deterministic DOM and browser-API contracts, but it is not a replacement for manual testing in a real browser, especially for layout, native file dialogs, downloads, and browser-specific behavior.
 
 ## Privacy and backups
 

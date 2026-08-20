@@ -1,0 +1,17 @@
+{
+  "name": "personal-os-v2",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.19.0 <25"
+  },
+  "scripts": {
+    "test": "node --test --test-isolation=none --test-concurrency=1 tests/*.test.mjs",
+    "check:index": "node scripts/check-index.mjs",
+    "check": "npm run check:index && npm test"
+  },
+  "devDependencies": {
+    "jsdom": "30.0.1"
+  }
+}

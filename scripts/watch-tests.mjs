@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDirectory, '..');
 const testsDirectory = path.join(projectRoot, 'tests');
+const sourceDirectory = path.join(projectRoot, 'src');
 const indexPath = path.join(projectRoot, 'index.html');
 const watchers = [];
 let child = null;
@@ -58,6 +59,9 @@ function requestRestart(changedPath) {
 
 watchers.push(watch(testsDirectory, { recursive: true }, (_eventType, filename) => {
   requestRestart(filename ? path.join('tests', String(filename)) : 'tests');
+}));
+watchers.push(watch(sourceDirectory, { recursive: true }, (_eventType, filename) => {
+  requestRestart(filename ? path.join('src', String(filename)) : 'src');
 }));
 watchers.push(watch(indexPath, () => requestRestart('index.html')));
 

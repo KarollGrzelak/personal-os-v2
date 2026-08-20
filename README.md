@@ -2,7 +2,7 @@
 
 Personal OS v2 is an early-stage, privacy-first personal productivity system. It combines daily planning, habits, training, school responsibilities, an IT learning roadmap, and local data management in one browser application.
 
-The current release is a single self-contained `index.html` file. It has no backend, account system, analytics service, or cloud synchronization. Application data stays in the browser's `localStorage` unless the user explicitly exports a backup file.
+The current release is a small static bundle: `index.html` loads `src/styles.css` and the classic script `src/app.js`. It has no backend, account system, analytics service, cloud synchronization, build step, or runtime dependency installation. Application data stays in the browser's `localStorage` unless the user explicitly exports a backup file.
 
 ## Current status
 
@@ -28,7 +28,7 @@ The current release is a single self-contained `index.html` file. It has no back
 
 Normal use does not require Node.js, npm, a build step, or dependency installation.
 
-1. Download or clone the repository.
+1. Download or clone the repository, keeping `index.html` and the `src/` directory together.
 2. Open `index.html` in a modern browser.
 
 You can also serve the folder with any static file server, but the application does not require one.
@@ -45,11 +45,11 @@ Available quality commands:
 
 ```sh
 npm test             # run the complete test suite once
-npm run test:watch  # rerun tests after changes in tests/, helpers, or index.html
+npm run test:watch  # rerun tests after changes in tests/, helpers, index.html, or src/
 npm run check       # validate index.html structure and run the complete test suite
 ```
 
-Tests execute the real inline application script read from `index.html` in an isolated JSDOM instance. The adapter used to expose selected symbols exists only in the in-memory document created by the test loader; the production HTML is not modified or instrumented on disk.
+Tests execute the real `index.html`, `src/app.js`, and `src/styles.css` in an isolated JSDOM instance. A controlled resource loader serves only those two local assets and rejects every other resource request. The adapter used to expose selected symbols is appended only to the in-memory response for `src/app.js`; production files are not modified or instrumented on disk.
 
 All fixtures and test records are synthetic. Tests do not load exported user backups, real browser data, or network resources.
 

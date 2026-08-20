@@ -2,15 +2,22 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder, TextEncoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { JSDOM, VirtualConsole } from 'jsdom';
+import { JSDOM, requestInterceptor, VirtualConsole } from 'jsdom';
 
 process.env.TZ = 'Europe/Warsaw';
 
 const FIXED_NOW = '2026-08-20T08:00:00.000Z';
-const TEST_URL = 'https://personal-os.test/';
+const TEST_URL = 'https://personal-os.test/personal-os-v2/';
+const EXPECTED_SCRIPT_SOURCE = './src/app.js';
+const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
+const EXPECTED_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCE, TEST_URL).href;
+const EXPECTED_STYLESHEET_URL = new URL(EXPECTED_STYLESHEET_SOURCE, TEST_URL).href;
 const SCRIPT_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const SCRIPT_OPEN_PATTERN = /<script\b[^>]*>/gi;
 const SCRIPT_CLOSE_PATTERN = /<\/script\s*>/gi;
+const STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
+const STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
+const LINK_PATTERN = /<link\b([^>]*)>/gi;
 const TEST_BRIDGE = `
 ;globalThis.__PERSONAL_OS_TEST__ = Object.freeze({
   DATA_VERSION,
@@ -54,10 +61,22 @@ const TEST_BRIDGE = `
 `;
 
 const helperDirectory = path.dirname(fileURLToPath(import.meta.url));
-const indexPath = path.resolve(helperDirectory, '..', '..', 'index.html');
+const projectRoot = path.resolve(helperDirectory, '..', '..');
+const indexPath = path.join(projectRoot, 'index.html');
+const appPath = path.join(projectRoot, 'src', 'app.js');
+const stylesPath = path.join(projectRoot, 'src', 'styles.css');
 
 export function toPlain(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function readAttribute(attributes, name) {
+  const match = attributes.match(new RegExp("\\b" + name + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'=<>`]+))", 'i'));
+  return match ? (match[1] ?? match[2] ?? match[3] ?? '') : null;
+}
+
+function hasAttribute(attributes, name) {
+  return new RegExp(`(?:^|\\s)${name}(?:\\s|=|$)`, 'i').test(attributes);
 }
 
 export function inspectIndexHtml(html) {
@@ -73,19 +92,37 @@ export function inspectIndexHtml(html) {
   }
 
   const attributes = scripts[0][1];
-  const hasSource = /\bsrc\s*=/i.test(attributes);
-  const typeMatch = attributes.match(/\btype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
-  const type = (typeMatch?.[1] ?? typeMatch?.[2] ?? typeMatch?.[3] ?? '').trim().toLowerCase();
-  const isClassic = !hasSource && ['', 'text/javascript', 'application/javascript'].includes(type);
+  const scriptSource = readAttribute(attributes, 'src');
+  const hasSource = scriptSource !== null;
+  const type = (readAttribute(attributes, 'type') ?? '').trim().toLowerCase();
+  const hasForbiddenScheduling = ['async', 'defer', 'nomodule'].some(name => hasAttribute(attributes, name));
+  const isClassic = hasSource
+    && scriptSource === EXPECTED_SCRIPT_SOURCE
+    && scripts[0][2].trim() === ''
+    && !hasForbiddenScheduling
+    && ['', 'text/javascript', 'application/javascript'].includes(type);
+  const styleOpeningTags = html.match(STYLE_OPEN_PATTERN) ?? [];
+  const styleClosingTags = html.match(STYLE_CLOSE_PATTERN) ?? [];
+  const stylesheetLinks = [...html.matchAll(LINK_PATTERN)].filter(match => {
+    const rel = (readAttribute(match[1], 'rel') ?? '').toLowerCase().split(/\s+/);
+    return rel.includes('stylesheet');
+  });
+  const stylesheetSource = stylesheetLinks.length === 1
+    ? readAttribute(stylesheetLinks[0][1], 'href')
+    : null;
 
   return {
     attributes,
+    hasForbiddenScheduling,
     hasSource,
     html,
     inlineCode: scripts[0][2],
     isClassic,
+    scriptSource,
     scriptCount: scripts.length,
-    scriptMatch: scripts[0]
+    styleBlockCount: Math.max(styleOpeningTags.length, styleClosingTags.length),
+    stylesheetCount: stylesheetLinks.length,
+    stylesheetSource
   };
 }
 
@@ -93,23 +130,67 @@ export async function readIndexHtml() {
   return readFile(indexPath, 'utf8');
 }
 
-function documentWithTestBridge(html, inspection) {
-  const fullMatch = inspection.scriptMatch[0];
-  const closingTagIndex = fullMatch.toLowerCase().lastIndexOf('</script');
-  if (closingTagIndex < 0) throw new Error('Nie znaleziono zamknięcia skryptu inline.');
-  const bridgedScript = fullMatch.slice(0, closingTagIndex) + TEST_BRIDGE + fullMatch.slice(closingTagIndex);
-  const matchStart = inspection.scriptMatch.index;
-  return html.slice(0, matchStart) + bridgedScript + html.slice(matchStart + fullMatch.length);
+export async function readAppSource() {
+  return readFile(appPath, 'utf8');
+}
+
+export async function readStylesSource() {
+  return readFile(stylesPath, 'utf8');
+}
+
+function createControlledResourceLoader(appSource, stylesSource, control) {
+  return {
+    interceptors: [
+      requestInterceptor(request => {
+        control.requests.push(request.url);
+        if (request.url === EXPECTED_SCRIPT_URL) {
+          return new Response(appSource + TEST_BRIDGE, {
+            headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
+          });
+        }
+        if (request.url === EXPECTED_STYLESHEET_URL) {
+          return new Response(stylesSource, {
+            headers: { 'Content-Type': 'text/css; charset=utf-8' }
+          });
+        }
+        control.blocked.push(request.url);
+        throw new Error(`Zablokowano nieoczekiwane żądanie zasobu: ${request.url}`);
+      })
+    ]
+  };
+}
+
+async function waitForWindowLoad(window, timeoutMs = 5000) {
+  if (window.document.readyState === 'complete') return;
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Przekroczono limit ${timeoutMs} ms podczas ładowania zasobów aplikacji.`));
+    }, timeoutMs);
+    window.addEventListener('load', () => {
+      clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  });
 }
 
 export async function loadApp({
   fixedNow = FIXED_NOW,
   random = 0.3141592653589793,
-  storage = {}
+  storage = {},
+  unexpectedResourceUrl = null
 } = {}) {
-  const html = await readIndexHtml();
+  const [html, appSource, stylesSource] = await Promise.all([
+    readIndexHtml(),
+    readAppSource(),
+    readStylesSource()
+  ]);
   const inspection = inspectIndexHtml(html);
-  if (!inspection.isClassic) throw new Error('index.html nie zawiera jednego klasycznego skryptu inline.');
+  if (!inspection.isClassic) throw new Error('index.html nie zawiera jednego oczekiwanego klasycznego skryptu zewnętrznego.');
+  if (inspection.styleBlockCount !== 0
+      || inspection.stylesheetCount !== 1
+      || inspection.stylesheetSource !== EXPECTED_STYLESHEET_SOURCE) {
+    throw new Error('index.html nie zawiera jednego oczekiwanego zewnętrznego arkusza stylów.');
+  }
 
   const errors = {
     console: [],
@@ -155,13 +236,15 @@ export async function loadApp({
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('error', (...args) => errors.console.push(args));
   virtualConsole.on('jsdomError', error => errors.jsdom.push(error));
+  const resourceControl = { blocked: [], requests: [] };
+  const resourceLoader = createControlledResourceLoader(appSource, stylesSource, resourceControl);
 
   const fixedTimestamp = new Date(fixedNow).getTime();
   if (Number.isNaN(fixedTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);
   let randomState = Math.floor(Number(random) * 0x100000000) >>> 0;
   if (!Number.isFinite(Number(random))) throw new Error(`Nieprawidłowe ziarno losowości: ${random}`);
 
-  const dom = new JSDOM(documentWithTestBridge(html, inspection), {
+  const dom = new JSDOM(html, {
     beforeParse(window) {
       const NativeDate = window.Date;
       class FixedDate extends NativeDate {
@@ -255,10 +338,25 @@ export async function loadApp({
         window.localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
       }
     },
+    resources: resourceLoader,
     runScripts: 'dangerously',
     url: TEST_URL,
     virtualConsole
   });
+
+  if (unexpectedResourceUrl !== null) {
+    const frame = dom.window.document.createElement('iframe');
+    frame.hidden = true;
+    frame.src = String(unexpectedResourceUrl);
+    dom.window.document.body.appendChild(frame);
+  }
+
+  try {
+    await waitForWindowLoad(dom.window);
+  } catch (error) {
+    dom.window.close();
+    throw error;
+  }
 
   const api = dom.window.__PERSONAL_OS_TEST__;
   if (!api) {
@@ -278,6 +376,7 @@ export async function loadApp({
     errors,
     inspection,
     fileReaderControl,
+    resourceControl,
     storageControl,
     window: dom.window,
     close() {

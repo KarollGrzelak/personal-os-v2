@@ -2,7 +2,13 @@
 
 ## Overview
 
-Personal OS v2 is currently a single-page, single-file browser application. HTML, CSS, application state management, domain engines, modules, validation, migrations, and backup logic are contained in `index.html`.
+Personal OS v2 is a single-page static browser application split across three production files:
+
+- `index.html` contains the document structure and loads the two local assets;
+- `src/styles.css` contains the extracted application stylesheet;
+- `src/app.js` contains all application state management, domain engines, modules, validation, migrations, backup logic, and UI initialization.
+
+`src/app.js` remains one classic script loaded synchronously at the end of `body`, without `type="module"`, `async`, or `defer`. This preserves the original evaluation and initialization order. There is still no bundler, build step, or runtime package dependency.
 
 The system is local-first:
 
@@ -171,11 +177,11 @@ If commit fails, rollback continues across all namespaces even if one restoratio
 
 ## Test infrastructure
 
-The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`; production logic is not copied into test modules.
+The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
 
 ### Loader and in-memory adapter
 
-`tests/helpers/load-app.mjs` verifies that the document contains one classic inline script, reads that script from `index.html`, and adds a small explicit test adapter to an in-memory copy of the document. The adapter exposes only symbols required by the current tests. It is never written back to `index.html`, so the production file remains byte-for-byte uninstrumented on disk.
+`tests/helpers/load-app.mjs` verifies that the document contains one classic external script at `./src/app.js` and one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact two local resources and rejects every other resource request. It appends a small explicit test adapter only to the in-memory response for `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
 
 Every test or logical group receives a fresh JSDOM window and closes it after use. The loader provides deterministic isolation for:
 
@@ -184,7 +190,7 @@ Every test or logical group receives a fresh JSDOM window and closes it after us
 - localStorage and controlled write failures;
 - dialogs, Blob URLs, download links, and FileReader success or failure;
 - window errors, unhandled promise rejections, JSDOM errors, and console errors;
-- synthetic data with no external resource loading or network access.
+- synthetic data with no network access; only the two allowlisted production resources are served from memory.
 
 ### Test layers
 
@@ -195,19 +201,19 @@ The suite is divided into explicit regression layers:
 3. module contracts, decisions, Day/Habits, Training, Learning/LessonGuide, and School;
 4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.
 
-`npm test` runs all layers once. `npm run check` first compiles and validates the real inline script without executing it, then runs the complete suite. `npm run test:watch` watches test files, helpers, and `index.html`, terminating the previous test process before a restart.
+`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/app.js` without executing it, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and `src/`, terminating the previous test process before a restart.
 
 GitHub Actions performs a locked `npm ci` followed by `npm run check` for pushes and pull requests on Node.js 24.19.0.
 
-### Modularization boundary and limitations
+### File boundary and limitations
 
-The single-inline-script assertion is an intentional boundary. A future approved modularization will make that check fail visibly and require the loader to be adapted to the new production structure instead of silently testing a stale copy of the logic.
+The three-file structure is an intentional boundary. The structural check requires the exact relative paths, a single classic script with no inline body or scheduling attributes, and a single external stylesheet with no `style` block. A future approved split of `src/app.js` into modules must update the check and loader explicitly instead of silently testing a stale copy of the logic.
 
 JSDOM validates DOM structure and controlled browser-API contracts, but it does not fully reproduce layout, native file pickers, browser download behavior, or every browser-specific security boundary. Those areas still require proportional verification in a real browser.
 
 ## Current constraints
 
-- The application remains one large HTML file.
+- Application logic remains one large classic JavaScript file even though CSS and JavaScript are no longer embedded in HTML.
 - Tests use the native Node.js runner and JSDOM rather than a browser automation framework.
 - Data remains tied to the current browser unless manually exported and imported.
 - There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.

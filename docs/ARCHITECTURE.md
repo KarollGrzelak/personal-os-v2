@@ -2,13 +2,14 @@
 
 ## Overview
 
-Personal OS v2 is a single-page static browser application split across three production files:
+Personal OS v2 is a single-page static browser application split across four production files:
 
-- `index.html` contains the document structure and loads the two local assets;
+- `index.html` contains the document structure and loads the three local assets;
 - `src/styles.css` contains the extracted application stylesheet;
-- `src/app.js` contains all application state management, domain engines, modules, validation, migrations, backup logic, and UI initialization.
+- `src/core.js` contains the mechanically extracted Core foundation: local date handling, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
+- `src/app.js` contains the remaining domain engines, modules, validation, backup logic, views, and UI initialization.
 
-`src/app.js` remains one classic script loaded synchronously at the end of `body`, without `type="module"`, `async`, or `defer`. This preserves the original evaluation and initialization order. There is still no bundler, build step, or runtime package dependency.
+`src/core.js` and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. The split is a byte-preserving extraction of the former single `src/app.js` and does not alter its declaration, registration, reconciliation, migration, or UI initialization order. There is still no bundler, build step, or runtime package dependency.
 
 The system is local-first:
 
@@ -25,6 +26,8 @@ browser localStorage
 There is no backend, user account, cloud database, or automatic synchronization.
 
 ## Core
+
+The Core declarations share the document's global lexical environment with the following classic `src/app.js` script. Migration 5 contains deferred references to LessonGuide validation functions declared later in `src/app.js`; those callbacks are not invoked while `src/core.js` loads and are available before the existing initialization code calls `runMigrations(Store)`. `src/core.js` is therefore the first ordered part of the application, not an independently executable package.
 
 ### EventBus
 
@@ -177,11 +180,11 @@ If commit fails, rollback continues across all namespaces even if one restoratio
 
 ## Test infrastructure
 
-The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
+The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/core.js`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
 
 ### Loader and in-memory adapter
 
-`tests/helpers/load-app.mjs` verifies that the document contains one classic external script at `./src/app.js` and one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact two local resources and rejects every other resource request. It appends a small explicit test adapter only to the in-memory response for `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
+`tests/helpers/load-app.mjs` verifies that the document contains two classic external scripts in the exact order `./src/core.js` then `./src/app.js`, plus one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact three local resources and rejects every other resource request. It serves `src/core.js` unchanged and appends a small explicit test adapter only to the in-memory response for `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
 
 Every test or logical group receives a fresh JSDOM window and closes it after use. The loader provides deterministic isolation for:
 
@@ -201,19 +204,19 @@ The suite is divided into explicit regression layers:
 3. module contracts, decisions, Day/Habits, Training, Learning/LessonGuide, and School;
 4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.
 
-`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/app.js` without executing it, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and `src/`, terminating the previous test process before a restart.
+`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js` and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
 
 GitHub Actions performs a locked `npm ci` followed by `npm run check` for pushes and pull requests on Node.js 24.19.0.
 
 ### File boundary and limitations
 
-The three-file structure is an intentional boundary. The structural check requires the exact relative paths, a single classic script with no inline body or scheduling attributes, and a single external stylesheet with no `style` block. A future approved split of `src/app.js` into modules must update the check and loader explicitly instead of silently testing a stale copy of the logic.
+The four-file structure is an intentional boundary. The structural check requires the exact relative paths and order of the two classic scripts, no inline script body or scheduling attributes, and a single external stylesheet with no `style` block. Any future approved split or module-system change must update the check and loader explicitly instead of silently testing a stale copy of the logic.
 
 JSDOM validates DOM structure and controlled browser-API contracts, but it does not fully reproduce layout, native file pickers, browser download behavior, or every browser-specific security boundary. Those areas still require proportional verification in a real browser.
 
 ## Current constraints
 
-- Application logic remains one large classic JavaScript file even though CSS and JavaScript are no longer embedded in HTML.
+- Application logic remains two ordered classic JavaScript files sharing one global lexical environment; the large domain/application layer still lives in `src/app.js`.
 - Tests use the native Node.js runner and JSDOM rather than a browser automation framework.
 - Data remains tied to the current browser unless manually exported and imported.
 - There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.

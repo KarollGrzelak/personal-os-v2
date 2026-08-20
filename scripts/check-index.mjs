@@ -11,7 +11,7 @@ const STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
 const STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
 const LINK_PATTERN = /<link\b([^>]*)>/gi;
 
-const EXPECTED_SCRIPT_SOURCE = './src/app.js';
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
 
 function fail(message) {
@@ -31,10 +31,12 @@ async function checkIndex() {
   const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
   const projectRoot = path.resolve(scriptDirectory, '..');
   const indexPath = path.join(projectRoot, 'index.html');
+  const corePath = path.join(projectRoot, 'src', 'core.js');
   const appPath = path.join(projectRoot, 'src', 'app.js');
   const stylesPath = path.join(projectRoot, 'src', 'styles.css');
-  const [html, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, appSource, stylesSource] = await Promise.all([
     readFile(indexPath, 'utf8'),
+    readFile(corePath, 'utf8'),
     readFile(appPath, 'utf8'),
     readFile(stylesPath, 'utf8')
   ]);
@@ -45,34 +47,41 @@ async function checkIndex() {
   if (openingTags.length !== closingTags.length || scripts.length !== openingTags.length) {
     fail(`nie można jednoznacznie odczytać skryptów (otwarcia: ${openingTags.length}, zamknięcia: ${closingTags.length})`);
   }
-  if (scripts.length !== 1) {
-    fail(`oczekiwano dokładnie jednego skryptu, znaleziono: ${scripts.length}`);
+  if (scripts.length !== EXPECTED_SCRIPT_SOURCES.length) {
+    fail(`oczekiwano dokładnie ${EXPECTED_SCRIPT_SOURCES.length} skryptów, znaleziono: ${scripts.length}`);
   }
 
-  const attributes = scripts[0][1];
-  const scriptSource = readAttribute(attributes, 'src');
-  if (scriptSource !== EXPECTED_SCRIPT_SOURCE) {
-    fail(`jedyny skrypt musi wskazywać dokładnie ${EXPECTED_SCRIPT_SOURCE}`);
-  }
-  if (scripts[0][2].trim() !== '') {
-    fail('zewnętrzny skrypt nie może zawierać kodu inline');
-  }
-  for (const forbiddenAttribute of ['async', 'defer', 'nomodule']) {
-    if (hasAttribute(attributes, forbiddenAttribute)) {
-      fail(`klasyczny skrypt nie może mieć atrybutu ${forbiddenAttribute}`);
+  scripts.forEach((script, index) => {
+    const attributes = script[1];
+    const expectedSource = EXPECTED_SCRIPT_SOURCES[index];
+    const scriptSource = readAttribute(attributes, 'src');
+    if (scriptSource !== expectedSource) {
+      fail(`skrypt ${index + 1} musi wskazywać dokładnie ${expectedSource}`);
     }
-  }
+    if (script[2].trim() !== '') {
+      fail(`zewnętrzny skrypt ${expectedSource} nie może zawierać kodu inline`);
+    }
+    for (const forbiddenAttribute of ['async', 'defer', 'nomodule']) {
+      if (hasAttribute(attributes, forbiddenAttribute)) {
+        fail(`klasyczny skrypt ${expectedSource} nie może mieć atrybutu ${forbiddenAttribute}`);
+      }
+    }
 
-  const type = (readAttribute(attributes, 'type') ?? '').trim().toLowerCase();
-  const classicTypes = new Set(['', 'text/javascript', 'application/javascript']);
-  if (!classicTypes.has(type)) {
-    fail(`jedyny skrypt nie jest skryptem klasycznym (type=${JSON.stringify(type)})`);
-  }
+    const type = (readAttribute(attributes, 'type') ?? '').trim().toLowerCase();
+    const classicTypes = new Set(['', 'text/javascript', 'application/javascript']);
+    if (!classicTypes.has(type)) {
+      fail(`skrypt ${expectedSource} nie jest skryptem klasycznym (type=${JSON.stringify(type)})`);
+    }
+  });
 
   const bodyCloseIndex = html.toLowerCase().lastIndexOf('</body>');
-  const scriptEndIndex = scripts[0].index + scripts[0][0].length;
-  if (bodyCloseIndex < 0 || scripts[0].index > bodyCloseIndex || html.slice(scriptEndIndex, bodyCloseIndex).trim() !== '') {
-    fail('skrypt musi być ostatnim elementem przed zamknięciem body');
+  const coreScriptEndIndex = scripts[0].index + scripts[0][0].length;
+  const appScriptEndIndex = scripts[1].index + scripts[1][0].length;
+  if (bodyCloseIndex < 0
+      || scripts.some(script => script.index > bodyCloseIndex)
+      || html.slice(coreScriptEndIndex, scripts[1].index).trim() !== ''
+      || html.slice(appScriptEndIndex, bodyCloseIndex).trim() !== '') {
+    fail('skrypty core.js i app.js muszą być sąsiadującymi ostatnimi elementami przed zamknięciem body');
   }
 
   const styleOpenings = html.match(STYLE_OPEN_PATTERN) ?? [];
@@ -97,15 +106,17 @@ async function checkIndex() {
   }
 
   if (stylesSource.length === 0) fail('src/styles.css jest pusty');
+  if (coreSource.length === 0) fail('src/core.js jest pusty');
   if (appSource.length === 0) fail('src/app.js jest pusty');
 
   try {
+    new vm.Script(coreSource, { filename: 'src/core.js' });
     new vm.Script(appSource, { filename: 'src/app.js' });
   } catch (error) {
-    fail(`błąd składni src/app.js: ${error.message}`);
+    fail(`błąd składni JavaScript: ${error.message}`);
   }
 
-  console.log('index.html OK: zewnętrzne src/styles.css i klasyczny src/app.js, ścieżki i składnia poprawne.');
+  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
 }
 
 try {

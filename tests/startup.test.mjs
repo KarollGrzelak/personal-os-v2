@@ -5,29 +5,34 @@ import {
   inspectIndexHtml,
   loadApp,
   readAppSource,
+  readCoreSource,
   readIndexHtml,
   readStylesSource,
   toPlain
 } from './helpers/load-app.mjs';
 
-test('index.html wskazuje dokładnie jeden klasyczny skrypt i jeden zewnętrzny arkusz stylów', async () => {
-  const [html, appSource, stylesSource] = await Promise.all([
+test('index.html wskazuje dwa uporządkowane klasyczne skrypty i jeden zewnętrzny arkusz stylów', async () => {
+  const [html, coreSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
+    readCoreSource(),
     readAppSource(),
     readStylesSource()
   ]);
   const inspection = inspectIndexHtml(html);
 
-  assert.equal(inspection.scriptCount, 1);
-  assert.equal(inspection.hasSource, true);
-  assert.equal(inspection.scriptSource, './src/app.js');
-  assert.equal(inspection.inlineCode.trim(), '');
-  assert.equal(inspection.hasForbiddenScheduling, false);
+  assert.equal(inspection.scriptCount, 2);
+  assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/app.js']);
+  assert.equal(inspection.scriptDetails.every(script => script.hasSource), true);
+  assert.equal(inspection.scriptDetails.every(script => script.inlineCode.trim() === ''), true);
+  assert.equal(inspection.scriptDetails.every(script => script.hasForbiddenScheduling === false), true);
+  assert.equal(inspection.scriptDetails.every(script => script.isClassic), true);
   assert.equal(inspection.isClassic, true);
   assert.equal(inspection.styleBlockCount, 0);
   assert.equal(inspection.stylesheetCount, 1);
   assert.equal(inspection.stylesheetSource, './src/styles.css');
   assert.notEqual(stylesSource.length, 0);
+  assert.notEqual(coreSource.length, 0);
+  assert.doesNotThrow(() => new vm.Script(coreSource, { filename: 'src/core.js' }));
   assert.doesNotThrow(() => new vm.Script(appSource, { filename: 'src/app.js' }));
 });
 
@@ -42,6 +47,7 @@ test('świeża aplikacja uruchamia się bez nieobsłużonych błędów i migruje
   assert.equal(app.document.getElementById('view-dzis').classList.contains('active'), true);
   assert.deepEqual(app.resourceControl.blocked, []);
   assert.deepEqual(new Set(app.resourceControl.requests), new Set([
+    'https://personal-os.test/personal-os-v2/src/core.js',
     'https://personal-os.test/personal-os-v2/src/app.js',
     'https://personal-os.test/personal-os-v2/src/styles.css'
   ]));

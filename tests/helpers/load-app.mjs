@@ -8,9 +8,10 @@ process.env.TZ = 'Europe/Warsaw';
 
 const FIXED_NOW = '2026-08-20T08:00:00.000Z';
 const TEST_URL = 'https://personal-os.test/personal-os-v2/';
-const EXPECTED_SCRIPT_SOURCE = './src/app.js';
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
-const EXPECTED_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCE, TEST_URL).href;
+const EXPECTED_CORE_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[0], TEST_URL).href;
+const EXPECTED_APP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[1], TEST_URL).href;
 const EXPECTED_STYLESHEET_URL = new URL(EXPECTED_STYLESHEET_SOURCE, TEST_URL).href;
 const SCRIPT_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const SCRIPT_OPEN_PATTERN = /<script\b[^>]*>/gi;
@@ -63,6 +64,7 @@ const TEST_BRIDGE = `
 const helperDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(helperDirectory, '..', '..');
 const indexPath = path.join(projectRoot, 'index.html');
+const corePath = path.join(projectRoot, 'src', 'core.js');
 const appPath = path.join(projectRoot, 'src', 'app.js');
 const stylesPath = path.join(projectRoot, 'src', 'styles.css');
 
@@ -87,20 +89,29 @@ export function inspectIndexHtml(html) {
   if (openingTags.length !== closingTags.length || scripts.length !== openingTags.length) {
     throw new Error(`Niejednoznaczna struktura skryptów: ${openingTags.length} otwarć, ${closingTags.length} zamknięć.`);
   }
-  if (scripts.length !== 1) {
-    throw new Error(`Oczekiwano jednego skryptu, znaleziono ${scripts.length}.`);
+  if (scripts.length !== EXPECTED_SCRIPT_SOURCES.length) {
+    throw new Error(`Oczekiwano ${EXPECTED_SCRIPT_SOURCES.length} skryptów, znaleziono ${scripts.length}.`);
   }
 
-  const attributes = scripts[0][1];
-  const scriptSource = readAttribute(attributes, 'src');
-  const hasSource = scriptSource !== null;
-  const type = (readAttribute(attributes, 'type') ?? '').trim().toLowerCase();
-  const hasForbiddenScheduling = ['async', 'defer', 'nomodule'].some(name => hasAttribute(attributes, name));
-  const isClassic = hasSource
-    && scriptSource === EXPECTED_SCRIPT_SOURCE
-    && scripts[0][2].trim() === ''
-    && !hasForbiddenScheduling
-    && ['', 'text/javascript', 'application/javascript'].includes(type);
+  const scriptDetails = scripts.map((script, index) => {
+    const attributes = script[1];
+    const source = readAttribute(attributes, 'src');
+    const type = (readAttribute(attributes, 'type') ?? '').trim().toLowerCase();
+    const hasForbiddenScheduling = ['async', 'defer', 'nomodule'].some(name => hasAttribute(attributes, name));
+    return {
+      attributes,
+      hasForbiddenScheduling,
+      hasSource: source !== null,
+      inlineCode: script[2],
+      isClassic: source !== null
+        && source === EXPECTED_SCRIPT_SOURCES[index]
+        && script[2].trim() === ''
+        && !hasForbiddenScheduling
+        && ['', 'text/javascript', 'application/javascript'].includes(type),
+      source,
+      type
+    };
+  });
   const styleOpeningTags = html.match(STYLE_OPEN_PATTERN) ?? [];
   const styleClosingTags = html.match(STYLE_CLOSE_PATTERN) ?? [];
   const stylesheetLinks = [...html.matchAll(LINK_PATTERN)].filter(match => {
@@ -112,14 +123,11 @@ export function inspectIndexHtml(html) {
     : null;
 
   return {
-    attributes,
-    hasForbiddenScheduling,
-    hasSource,
     html,
-    inlineCode: scripts[0][2],
-    isClassic,
-    scriptSource,
+    isClassic: scriptDetails.every(script => script.isClassic),
     scriptCount: scripts.length,
+    scriptDetails,
+    scriptSources: scriptDetails.map(script => script.source),
     styleBlockCount: Math.max(styleOpeningTags.length, styleClosingTags.length),
     stylesheetCount: stylesheetLinks.length,
     stylesheetSource
@@ -130,6 +138,10 @@ export async function readIndexHtml() {
   return readFile(indexPath, 'utf8');
 }
 
+export async function readCoreSource() {
+  return readFile(corePath, 'utf8');
+}
+
 export async function readAppSource() {
   return readFile(appPath, 'utf8');
 }
@@ -138,12 +150,17 @@ export async function readStylesSource() {
   return readFile(stylesPath, 'utf8');
 }
 
-function createControlledResourceLoader(appSource, stylesSource, control) {
+function createControlledResourceLoader(coreSource, appSource, stylesSource, control) {
   return {
     interceptors: [
       requestInterceptor(request => {
         control.requests.push(request.url);
-        if (request.url === EXPECTED_SCRIPT_URL) {
+        if (request.url === EXPECTED_CORE_SCRIPT_URL) {
+          return new Response(coreSource, {
+            headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
+          });
+        }
+        if (request.url === EXPECTED_APP_SCRIPT_URL) {
           return new Response(appSource + TEST_BRIDGE, {
             headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
           });
@@ -179,13 +196,14 @@ export async function loadApp({
   storage = {},
   unexpectedResourceUrl = null
 } = {}) {
-  const [html, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
+    readCoreSource(),
     readAppSource(),
     readStylesSource()
   ]);
   const inspection = inspectIndexHtml(html);
-  if (!inspection.isClassic) throw new Error('index.html nie zawiera jednego oczekiwanego klasycznego skryptu zewnętrznego.');
+  if (!inspection.isClassic) throw new Error('index.html nie zawiera oczekiwanych klasycznych skryptów core.js → app.js.');
   if (inspection.styleBlockCount !== 0
       || inspection.stylesheetCount !== 1
       || inspection.stylesheetSource !== EXPECTED_STYLESHEET_SOURCE) {
@@ -237,7 +255,7 @@ export async function loadApp({
   virtualConsole.on('error', (...args) => errors.console.push(args));
   virtualConsole.on('jsdomError', error => errors.jsdom.push(error));
   const resourceControl = { blocked: [], requests: [] };
-  const resourceLoader = createControlledResourceLoader(appSource, stylesSource, resourceControl);
+  const resourceLoader = createControlledResourceLoader(coreSource, appSource, stylesSource, resourceControl);
 
   const fixedTimestamp = new Date(fixedNow).getTime();
   if (Number.isNaN(fixedTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);

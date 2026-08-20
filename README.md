@@ -2,7 +2,7 @@
 
 Personal OS v2 is an early-stage, privacy-first personal productivity system. It combines daily planning, habits, training, school responsibilities, an IT learning roadmap, and local data management in one browser application.
 
-The current release is a small static bundle: `index.html` loads `src/styles.css` and the classic script `src/app.js`. It has no backend, account system, analytics service, cloud synchronization, build step, or runtime dependency installation. Application data stays in the browser's `localStorage` unless the user explicitly exports a backup file.
+The current release is a small static bundle: `index.html` loads `src/styles.css`, then the classic scripts `src/core.js` and `src/app.js` synchronously in that order. It has no backend, account system, analytics service, cloud synchronization, build step, or runtime dependency installation. Application data stays in the browser's `localStorage` unless the user explicitly exports a backup file.
 
 ## Current status
 
@@ -49,7 +49,7 @@ npm run test:watch  # rerun tests after changes in tests/, helpers, index.html, 
 npm run check       # validate index.html structure and run the complete test suite
 ```
 
-Tests execute the real `index.html`, `src/app.js`, and `src/styles.css` in an isolated JSDOM instance. A controlled resource loader serves only those two local assets and rejects every other resource request. The adapter used to expose selected symbols is appended only to the in-memory response for `src/app.js`; production files are not modified or instrumented on disk.
+Tests execute the real `index.html`, `src/core.js`, `src/app.js`, and `src/styles.css` in an isolated JSDOM instance. A controlled resource loader serves only those three local assets and rejects every other resource request. The adapter used to expose selected symbols is appended only to the in-memory response for `src/app.js`; production files are not modified or instrumented on disk.
 
 All fixtures and test records are synthetic. Tests do not load exported user backups, real browser data, or network resources.
 

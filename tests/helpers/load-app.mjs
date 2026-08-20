@@ -19,7 +19,18 @@ const TEST_BRIDGE = `
   MIGRATIONS,
   runMigrations,
   ModuleRegistry,
-  Router
+  Router,
+  DayEngine,
+  HabitEngine,
+  PriorityEngine,
+  DecisionEngine,
+  RoadmapEngine,
+  ROADMAP_STAGES,
+  validateRoadmapDefinition,
+  normalizeLessonGuide,
+  isValidLessonGuide,
+  isValidCalendarDateString,
+  isValidTimeString
 });
 `;
 
@@ -99,6 +110,8 @@ export async function loadApp({
 
   const fixedTimestamp = new Date(fixedNow).getTime();
   if (Number.isNaN(fixedTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);
+  let randomState = Math.floor(Number(random) * 0x100000000) >>> 0;
+  if (!Number.isFinite(Number(random))) throw new Error(`Nieprawidłowe ziarno losowości: ${random}`);
 
   const dom = new JSDOM(documentWithTestBridge(html, inspection), {
     beforeParse(window) {
@@ -112,7 +125,10 @@ export async function loadApp({
         }
       }
       window.Date = FixedDate;
-      window.Math.random = () => random;
+      window.Math.random = () => {
+        randomState = (Math.imul(1664525, randomState) + 1013904223) >>> 0;
+        return randomState / 0x100000000;
+      };
 
       window.alert = message => dialogs.alerts.push(String(message));
       window.confirm = message => {

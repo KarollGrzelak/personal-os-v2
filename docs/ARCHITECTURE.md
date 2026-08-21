@@ -2,14 +2,15 @@
 
 ## Overview
 
-Personal OS v2 is a single-page static browser application split across four production files:
+Personal OS v2 is a single-page static browser application split across five production files:
 
-- `index.html` contains the document structure and loads the three local assets;
+- `index.html` contains the document structure and loads the four local assets;
 - `src/styles.css` contains the extracted application stylesheet;
 - `src/core.js` contains the mechanically extracted Core foundation: local date handling, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
+- `src/today.js` contains the mechanically extracted Today layer: DayEngine, HabitEngine, Today rendering, time budgets, PriorityEngine, and DecisionEngine;
 - `src/app.js` contains the remaining domain engines, modules, validation, backup logic, views, and UI initialization.
 
-`src/core.js` and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. The split is a byte-preserving extraction of the former single `src/app.js` and does not alter its declaration, registration, reconciliation, migration, or UI initialization order. There is still no bundler, build step, or runtime package dependency.
+`src/core.js`, `src/today.js`, and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. Both script boundaries are byte-preserving mechanical extractions from the former single `src/app.js`; concatenating the three files recreates that source without altering declaration, registration, reconciliation, migration, or UI initialization order. There is still no bundler, build step, or runtime package dependency.
 
 The system is local-first:
 
@@ -27,7 +28,7 @@ There is no backend, user account, cloud database, or automatic synchronization.
 
 ## Core
 
-The Core declarations share the document's global lexical environment with the following classic `src/app.js` script. Migration 5 contains deferred references to LessonGuide validation functions declared later in `src/app.js`; those callbacks are not invoked while `src/core.js` loads and are available before the existing initialization code calls `runMigrations(Store)`. `src/core.js` is therefore the first ordered part of the application, not an independently executable package.
+The Core declarations share the document's global lexical environment with the following classic `src/today.js` and `src/app.js` scripts. Migration 5 contains deferred references to LessonGuide validation functions declared later in `src/app.js`; those callbacks are not invoked while `src/core.js` loads and are available before the existing initialization code calls `runMigrations(Store)`. `src/core.js` is therefore the first ordered part of the application, not an independently executable package.
 
 ### EventBus
 
@@ -70,6 +71,8 @@ Calls without options retain the original behavior. A successful write follows t
 - `RoadmapEngine` owns IT roadmap stages, criteria, reconciliation, and unlocking rules.
 
 Engines communicate with modules through stable contracts and shared task records. They should not depend on a module's private storage representation.
+
+The Today declarations in `src/today.js` depend on Core declarations and share the same global lexical environment with the later `src/app.js`. Their references to `escapeHtml` and `escapeAttr` are deferred until rendering after the final script has loaded. Conversely, later application code depends on `DayEngine`, `DEFAULT_HABITS`, `renderDzis`, and `renderTodayTasks`. The three files are ordered source layers, not independently executable modules.
 
 ## Modules
 
@@ -180,11 +183,11 @@ If commit fails, rollback continues across all namespaces even if one restoratio
 
 ## Test infrastructure
 
-The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/core.js`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
+The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/core.js`, `src/today.js`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
 
 ### Loader and in-memory adapter
 
-`tests/helpers/load-app.mjs` verifies that the document contains two classic external scripts in the exact order `./src/core.js` then `./src/app.js`, plus one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact three local resources and rejects every other resource request. It serves `src/core.js` unchanged and appends a small explicit test adapter only to the in-memory response for `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
+`tests/helpers/load-app.mjs` verifies that the document contains three classic external scripts in the exact order `./src/core.js`, `./src/today.js`, then `./src/app.js`, plus one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact four local resources and rejects every other resource request. It serves `src/core.js` and `src/today.js` unchanged and appends a small explicit test adapter only to the in-memory response for the final `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
 
 Every test or logical group receives a fresh JSDOM window and closes it after use. The loader provides deterministic isolation for:
 
@@ -193,7 +196,7 @@ Every test or logical group receives a fresh JSDOM window and closes it after us
 - localStorage and controlled write failures;
 - dialogs, Blob URLs, download links, and FileReader success or failure;
 - window errors, unhandled promise rejections, JSDOM errors, and console errors;
-- synthetic data with no network access; only the two allowlisted production resources are served from memory.
+- synthetic data with no network access; only the four allowlisted production resources are served from memory.
 
 ### Test layers
 
@@ -204,19 +207,19 @@ The suite is divided into explicit regression layers:
 3. module contracts, decisions, Day/Habits, Training, Learning/LessonGuide, and School;
 4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.
 
-`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js` and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
+`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js`, `src/today.js`, and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
 
 GitHub Actions performs a locked `npm ci` followed by `npm run check` for pushes and pull requests on Node.js 24.19.0.
 
 ### File boundary and limitations
 
-The four-file structure is an intentional boundary. The structural check requires the exact relative paths and order of the two classic scripts, no inline script body or scheduling attributes, and a single external stylesheet with no `style` block. Any future approved split or module-system change must update the check and loader explicitly instead of silently testing a stale copy of the logic.
+The five-file structure is an intentional boundary. The structural check requires the exact relative paths and order of the three classic scripts, no inline script body or scheduling attributes, and a single external stylesheet with no `style` block. Any future approved split or module-system change must update the check and loader explicitly instead of silently testing a stale copy of the logic.
 
 JSDOM validates DOM structure and controlled browser-API contracts, but it does not fully reproduce layout, native file pickers, browser download behavior, or every browser-specific security boundary. Those areas still require proportional verification in a real browser.
 
 ## Current constraints
 
-- Application logic remains two ordered classic JavaScript files sharing one global lexical environment; the large domain/application layer still lives in `src/app.js`.
+- Application logic remains three ordered classic JavaScript files sharing one global lexical environment; the large domain/application layer still lives in `src/app.js`.
 - Tests use the native Node.js runner and JSDOM rather than a browser automation framework.
 - Data remains tied to the current browser unless manually exported and imported.
 - There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.

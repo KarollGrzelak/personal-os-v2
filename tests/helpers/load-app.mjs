@@ -8,10 +8,11 @@ process.env.TZ = 'Europe/Warsaw';
 
 const FIXED_NOW = '2026-08-20T08:00:00.000Z';
 const TEST_URL = 'https://personal-os.test/personal-os-v2/';
-const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/app.js'];
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
 const EXPECTED_CORE_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[0], TEST_URL).href;
-const EXPECTED_APP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[1], TEST_URL).href;
+const EXPECTED_TODAY_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[1], TEST_URL).href;
+const EXPECTED_APP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[2], TEST_URL).href;
 const EXPECTED_STYLESHEET_URL = new URL(EXPECTED_STYLESHEET_SOURCE, TEST_URL).href;
 const SCRIPT_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const SCRIPT_OPEN_PATTERN = /<script\b[^>]*>/gi;
@@ -65,6 +66,7 @@ const helperDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(helperDirectory, '..', '..');
 const indexPath = path.join(projectRoot, 'index.html');
 const corePath = path.join(projectRoot, 'src', 'core.js');
+const todayPath = path.join(projectRoot, 'src', 'today.js');
 const appPath = path.join(projectRoot, 'src', 'app.js');
 const stylesPath = path.join(projectRoot, 'src', 'styles.css');
 
@@ -121,12 +123,26 @@ export function inspectIndexHtml(html) {
   const stylesheetSource = stylesheetLinks.length === 1
     ? readAttribute(stylesheetLinks[0][1], 'href')
     : null;
+  const bodyOpenIndex = html.toLowerCase().indexOf('<body');
+  const bodyCloseIndex = html.toLowerCase().lastIndexOf('</body>');
+  const scriptsAreAdjacent = scripts.slice(0, -1).every((script, index) => {
+    const scriptEndIndex = script.index + script[0].length;
+    return html.slice(scriptEndIndex, scripts[index + 1].index).trim() === '';
+  });
+  const lastScript = scripts.at(-1);
+  const lastScriptEndIndex = lastScript.index + lastScript[0].length;
+  const scriptsAtBodyEnd = bodyOpenIndex >= 0
+    && bodyCloseIndex >= 0
+    && scripts.every(script => script.index >= bodyOpenIndex && script.index <= bodyCloseIndex)
+    && html.slice(lastScriptEndIndex, bodyCloseIndex).trim() === '';
 
   return {
     html,
     isClassic: scriptDetails.every(script => script.isClassic),
     scriptCount: scripts.length,
     scriptDetails,
+    scriptsAreAdjacent,
+    scriptsAtBodyEnd,
     scriptSources: scriptDetails.map(script => script.source),
     styleBlockCount: Math.max(styleOpeningTags.length, styleClosingTags.length),
     stylesheetCount: stylesheetLinks.length,
@@ -142,6 +158,10 @@ export async function readCoreSource() {
   return readFile(corePath, 'utf8');
 }
 
+export async function readTodaySource() {
+  return readFile(todayPath, 'utf8');
+}
+
 export async function readAppSource() {
   return readFile(appPath, 'utf8');
 }
@@ -150,13 +170,18 @@ export async function readStylesSource() {
   return readFile(stylesPath, 'utf8');
 }
 
-function createControlledResourceLoader(coreSource, appSource, stylesSource, control) {
+function createControlledResourceLoader(coreSource, todaySource, appSource, stylesSource, control) {
   return {
     interceptors: [
       requestInterceptor(request => {
         control.requests.push(request.url);
         if (request.url === EXPECTED_CORE_SCRIPT_URL) {
           return new Response(coreSource, {
+            headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
+          });
+        }
+        if (request.url === EXPECTED_TODAY_SCRIPT_URL) {
+          return new Response(todaySource, {
             headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
           });
         }
@@ -196,14 +221,17 @@ export async function loadApp({
   storage = {},
   unexpectedResourceUrl = null
 } = {}) {
-  const [html, coreSource, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, todaySource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
     readCoreSource(),
+    readTodaySource(),
     readAppSource(),
     readStylesSource()
   ]);
   const inspection = inspectIndexHtml(html);
-  if (!inspection.isClassic) throw new Error('index.html nie zawiera oczekiwanych klasycznych skryptów core.js → app.js.');
+  if (!inspection.isClassic || !inspection.scriptsAreAdjacent || !inspection.scriptsAtBodyEnd) {
+    throw new Error('index.html nie zawiera oczekiwanych sąsiadujących klasycznych skryptów core.js → today.js → app.js na końcu body.');
+  }
   if (inspection.styleBlockCount !== 0
       || inspection.stylesheetCount !== 1
       || inspection.stylesheetSource !== EXPECTED_STYLESHEET_SOURCE) {
@@ -255,7 +283,7 @@ export async function loadApp({
   virtualConsole.on('error', (...args) => errors.console.push(args));
   virtualConsole.on('jsdomError', error => errors.jsdom.push(error));
   const resourceControl = { blocked: [], requests: [] };
-  const resourceLoader = createControlledResourceLoader(coreSource, appSource, stylesSource, resourceControl);
+  const resourceLoader = createControlledResourceLoader(coreSource, todaySource, appSource, stylesSource, resourceControl);
 
   const fixedTimestamp = new Date(fixedNow).getTime();
   if (Number.isNaN(fixedTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);

@@ -11,7 +11,7 @@ const STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
 const STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
 const LINK_PATTERN = /<link\b([^>]*)>/gi;
 
-const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/app.js'];
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
 
 function fail(message) {
@@ -32,11 +32,13 @@ async function checkIndex() {
   const projectRoot = path.resolve(scriptDirectory, '..');
   const indexPath = path.join(projectRoot, 'index.html');
   const corePath = path.join(projectRoot, 'src', 'core.js');
+  const todayPath = path.join(projectRoot, 'src', 'today.js');
   const appPath = path.join(projectRoot, 'src', 'app.js');
   const stylesPath = path.join(projectRoot, 'src', 'styles.css');
-  const [html, coreSource, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, todaySource, appSource, stylesSource] = await Promise.all([
     readFile(indexPath, 'utf8'),
     readFile(corePath, 'utf8'),
+    readFile(todayPath, 'utf8'),
     readFile(appPath, 'utf8'),
     readFile(stylesPath, 'utf8')
   ]);
@@ -74,14 +76,20 @@ async function checkIndex() {
     }
   });
 
+  const bodyOpenIndex = html.toLowerCase().indexOf('<body');
   const bodyCloseIndex = html.toLowerCase().lastIndexOf('</body>');
-  const coreScriptEndIndex = scripts[0].index + scripts[0][0].length;
-  const appScriptEndIndex = scripts[1].index + scripts[1][0].length;
-  if (bodyCloseIndex < 0
-      || scripts.some(script => script.index > bodyCloseIndex)
-      || html.slice(coreScriptEndIndex, scripts[1].index).trim() !== ''
-      || html.slice(appScriptEndIndex, bodyCloseIndex).trim() !== '') {
-    fail('skrypty core.js i app.js muszą być sąsiadującymi ostatnimi elementami przed zamknięciem body');
+  const scriptsAreAdjacent = scripts.slice(0, -1).every((script, index) => {
+    const scriptEndIndex = script.index + script[0].length;
+    return html.slice(scriptEndIndex, scripts[index + 1].index).trim() === '';
+  });
+  const lastScript = scripts.at(-1);
+  const lastScriptEndIndex = lastScript.index + lastScript[0].length;
+  if (bodyOpenIndex < 0
+      || bodyCloseIndex < 0
+      || scripts.some(script => script.index < bodyOpenIndex || script.index > bodyCloseIndex)
+      || !scriptsAreAdjacent
+      || html.slice(lastScriptEndIndex, bodyCloseIndex).trim() !== '') {
+    fail('skrypty core.js, today.js i app.js muszą być sąsiadującymi ostatnimi elementami przed zamknięciem body');
   }
 
   const styleOpenings = html.match(STYLE_OPEN_PATTERN) ?? [];
@@ -107,16 +115,18 @@ async function checkIndex() {
 
   if (stylesSource.length === 0) fail('src/styles.css jest pusty');
   if (coreSource.length === 0) fail('src/core.js jest pusty');
+  if (todaySource.length === 0) fail('src/today.js jest pusty');
   if (appSource.length === 0) fail('src/app.js jest pusty');
 
   try {
     new vm.Script(coreSource, { filename: 'src/core.js' });
+    new vm.Script(todaySource, { filename: 'src/today.js' });
     new vm.Script(appSource, { filename: 'src/app.js' });
   } catch (error) {
     fail(`błąd składni JavaScript: ${error.message}`);
   }
 
-  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
+  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/today.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
 }
 
 try {

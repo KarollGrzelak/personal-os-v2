@@ -11,7 +11,7 @@ const STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
 const STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
 const LINK_PATTERN = /<link\b([^>]*)>/gi;
 
-const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/app.js'];
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
 
 function fail(message) {
@@ -33,12 +33,14 @@ async function checkIndex() {
   const indexPath = path.join(projectRoot, 'index.html');
   const corePath = path.join(projectRoot, 'src', 'core.js');
   const todayPath = path.join(projectRoot, 'src', 'today.js');
+  const trainingPath = path.join(projectRoot, 'src', 'training.js');
   const appPath = path.join(projectRoot, 'src', 'app.js');
   const stylesPath = path.join(projectRoot, 'src', 'styles.css');
-  const [html, coreSource, todaySource, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, todaySource, trainingSource, appSource, stylesSource] = await Promise.all([
     readFile(indexPath, 'utf8'),
     readFile(corePath, 'utf8'),
     readFile(todayPath, 'utf8'),
+    readFile(trainingPath, 'utf8'),
     readFile(appPath, 'utf8'),
     readFile(stylesPath, 'utf8')
   ]);
@@ -89,7 +91,7 @@ async function checkIndex() {
       || scripts.some(script => script.index < bodyOpenIndex || script.index > bodyCloseIndex)
       || !scriptsAreAdjacent
       || html.slice(lastScriptEndIndex, bodyCloseIndex).trim() !== '') {
-    fail('skrypty core.js, today.js i app.js muszą być sąsiadującymi ostatnimi elementami przed zamknięciem body');
+    fail('skrypty core.js, today.js, training.js i app.js muszą być sąsiadującymi ostatnimi elementami przed zamknięciem body');
   }
 
   const styleOpenings = html.match(STYLE_OPEN_PATTERN) ?? [];
@@ -116,17 +118,19 @@ async function checkIndex() {
   if (stylesSource.length === 0) fail('src/styles.css jest pusty');
   if (coreSource.length === 0) fail('src/core.js jest pusty');
   if (todaySource.length === 0) fail('src/today.js jest pusty');
+  if (trainingSource.length === 0) fail('src/training.js jest pusty');
   if (appSource.length === 0) fail('src/app.js jest pusty');
 
   try {
     new vm.Script(coreSource, { filename: 'src/core.js' });
     new vm.Script(todaySource, { filename: 'src/today.js' });
+    new vm.Script(trainingSource, { filename: 'src/training.js' });
     new vm.Script(appSource, { filename: 'src/app.js' });
   } catch (error) {
     fail(`błąd składni JavaScript: ${error.message}`);
   }
 
-  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/today.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
+  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/today.js → src/training.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
 }
 
 try {

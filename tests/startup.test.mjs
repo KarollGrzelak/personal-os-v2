@@ -8,26 +8,28 @@ import {
   readCoreSource,
   readIndexHtml,
   readLearningSource,
+  readSchoolSource,
   readStylesSource,
   readTodaySource,
   readTrainingSource,
   toPlain
 } from './helpers/load-app.mjs';
 
-test('index.html wskazuje pięć uporządkowanych klasycznych skryptów i jeden zewnętrzny arkusz stylów', async () => {
-  const [html, coreSource, todaySource, trainingSource, learningSource, appSource, stylesSource] = await Promise.all([
+test('index.html wskazuje sześć uporządkowanych klasycznych skryptów i jeden zewnętrzny arkusz stylów', async () => {
+  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
     readCoreSource(),
     readTodaySource(),
     readTrainingSource(),
     readLearningSource(),
+    readSchoolSource(),
     readAppSource(),
     readStylesSource()
   ]);
   const inspection = inspectIndexHtml(html);
 
-  assert.equal(inspection.scriptCount, 5);
-  assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/app.js']);
+  assert.equal(inspection.scriptCount, 6);
+  assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/app.js']);
   assert.equal(inspection.scriptDetails.every(script => script.hasSource), true);
   assert.equal(inspection.scriptDetails.every(script => script.inlineCode.trim() === ''), true);
   assert.equal(inspection.scriptDetails.every(script => script.hasForbiddenScheduling === false), true);
@@ -43,11 +45,13 @@ test('index.html wskazuje pięć uporządkowanych klasycznych skryptów i jeden 
   assert.notEqual(todaySource.length, 0);
   assert.notEqual(trainingSource.length, 0);
   assert.notEqual(learningSource.length, 0);
+  assert.notEqual(schoolSource.length, 0);
   assert.notEqual(appSource.length, 0);
   assert.doesNotThrow(() => new vm.Script(coreSource, { filename: 'src/core.js' }));
   assert.doesNotThrow(() => new vm.Script(todaySource, { filename: 'src/today.js' }));
   assert.doesNotThrow(() => new vm.Script(trainingSource, { filename: 'src/training.js' }));
   assert.doesNotThrow(() => new vm.Script(learningSource, { filename: 'src/learning.js' }));
+  assert.doesNotThrow(() => new vm.Script(schoolSource, { filename: 'src/school.js' }));
   assert.doesNotThrow(() => new vm.Script(appSource, { filename: 'src/app.js' }));
 });
 
@@ -66,6 +70,7 @@ test('świeża aplikacja uruchamia się bez nieobsłużonych błędów i migruje
     'https://personal-os.test/personal-os-v2/src/today.js',
     'https://personal-os.test/personal-os-v2/src/training.js',
     'https://personal-os.test/personal-os-v2/src/learning.js',
+    'https://personal-os.test/personal-os-v2/src/school.js',
     'https://personal-os.test/personal-os-v2/src/app.js',
     'https://personal-os.test/personal-os-v2/src/styles.css'
   ]));

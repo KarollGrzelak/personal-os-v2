@@ -2,18 +2,19 @@
 
 ## Overview
 
-Personal OS v2 is a single-page static browser application split across eight production files:
+Personal OS v2 is a single-page static browser application split across nine production files:
 
-- `index.html` contains the document structure and loads the seven local assets;
+- `index.html` contains the document structure and loads the eight local assets;
 - `src/styles.css` contains the extracted application stylesheet;
 - `src/core.js` contains the mechanically extracted Core foundation: local date handling, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
 - `src/today.js` contains the mechanically extracted Today layer: DayEngine, HabitEngine, Today rendering, time budgets, PriorityEngine, and DecisionEngine;
 - `src/training.js` contains the mechanically extracted Training domain: exercise data, validation, TrainingPlanEngine, session and log rules, TrainingModule, and its view;
 - `src/learning.js` contains the mechanically extracted Learning domain: Roadmap, LessonGuide, validation, escaped rendering, reconciliation, and LearningModule registration;
 - `src/school.js` contains the mechanically extracted School domain: school item and lesson data rules, validation, priority and load calculations, SchoolModule, and its view;
-- `src/app.js` contains the remaining backup, cross-domain validation, view, and UI initialization code.
+- `src/backup.js` contains the mechanically extracted Backup layer: namespace definitions and validators, untrusted-data safeguards, export, preview, staging, migrations, Replace commit, and rollback;
+- `src/app.js` contains the remaining view and UI initialization code.
 
-`src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. Their boundaries are byte-preserving mechanical extractions from the former single `src/app.js`; concatenating the six files recreates that source without altering declaration, registration, reconciliation, migration, or UI initialization order. There is still no bundler, build step, or runtime package dependency.
+`src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/backup.js`, and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. Their boundaries are byte-preserving mechanical extractions from the former single `src/app.js`; concatenating the seven files recreates that source without altering declaration, registration, reconciliation, migration, or UI initialization order. There is still no bundler, build step, or runtime package dependency.
 
 The system is local-first:
 
@@ -31,7 +32,7 @@ There is no backend, user account, cloud database, or automatic synchronization.
 
 ## Core
 
-The Core declarations share the document's global lexical environment with the following classic `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, and `src/app.js` scripts. Migration 5 contains deferred references to LessonGuide validation functions declared later in `src/learning.js`; those callbacks are not invoked while `src/core.js` loads and are available before the existing initialization code calls `runMigrations(Store)`. `src/core.js` is therefore the first ordered part of the application, not an independently executable package.
+The Core declarations share the document's global lexical environment with the following classic `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/backup.js`, and `src/app.js` scripts. Migration 5 contains deferred references to LessonGuide validation functions declared later in `src/learning.js`; those callbacks are not invoked while `src/core.js` loads and are available before the existing initialization code calls `runMigrations(Store)`. `src/core.js` is therefore the first ordered part of the application, not an independently executable package.
 
 ### EventBus
 
@@ -75,13 +76,15 @@ Calls without options retain the original behavior. A successful write follows t
 
 Engines communicate with modules through stable contracts and shared task records. They should not depend on a module's private storage representation.
 
-The Today declarations in `src/today.js` depend on Core declarations and share the same global lexical environment with the later `src/training.js`, `src/learning.js`, `src/school.js`, and `src/app.js`. Their references to `escapeHtml` and `escapeAttr` are deferred until rendering after `src/learning.js` has loaded. Conversely, later application code depends on `DayEngine`, `DEFAULT_HABITS`, `renderDzis`, and `renderTodayTasks`.
+The Today declarations in `src/today.js` depend on Core declarations and share the same global lexical environment with the later `src/training.js`, `src/learning.js`, `src/school.js`, `src/backup.js`, and `src/app.js`. Their references to `escapeHtml` and `escapeAttr` are deferred until rendering after `src/learning.js` has loaded. Conversely, later application code depends on `DayEngine`, `DEFAULT_HABITS`, `renderDzis`, and `renderTodayTasks`.
 
-The Training declarations in `src/training.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, and `ModuleRegistry`, and on Today declarations including `DayEngine` and `renderTodayTasks`. Their reference to `escapeAttr` is deferred until rendering after `src/learning.js` has loaded. Later School, backup, and initialization code depends on the already registered `TrainingModule`, while backup validation in `src/app.js` uses Training declarations such as `validateProfile`.
+The Training declarations in `src/training.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, and `ModuleRegistry`, and on Today declarations including `DayEngine` and `renderTodayTasks`. Their reference to `escapeAttr` is deferred until rendering after `src/learning.js` has loaded. Later School, Backup, and initialization code depends on the already registered `TrainingModule`, while backup validation in `src/backup.js` uses Training declarations such as `validateProfile`.
 
 The Learning declarations in `src/learning.js` depend on Core declarations including `Store`, `EventBus`, and `ModuleRegistry`, and on Today rendering through `renderTodayTasks`. The Learning layer performs the existing Roadmap validation and reconciliation, then registers `LearningModule` before the following School layer loads. Its reference to `isValidCalendarDateString` is deferred until after that declaration is available in `src/school.js`. Conversely, School and other later UI code use `escapeHtml` and `escapeAttr` from Learning, while migration 5 and backup code use LessonGuide validation and Roadmap declarations.
 
-The School declarations in `src/school.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, and `ModuleRegistry`, on Today rendering through `renderTodayTasks`, and on Learning's `escapeHtml` and `escapeAttr`. During loading the layer initializes its constants and registers `SchoolModule`; Store access and rendering remain deferred until later application initialization or user interaction. The final `src/app.js` uses School's `isValidCalendarDateString`, `validateSchoolItem`, and `validateLesson` in cross-domain backup validation and relies on the already registered `SchoolModule` when building navigation and rendering modules. All six JavaScript files are ordered source layers sharing one global lexical environment, not independently executable modules.
+The School declarations in `src/school.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, and `ModuleRegistry`, on Today rendering through `renderTodayTasks`, and on Learning's `escapeHtml` and `escapeAttr`. During loading the layer initializes its constants and registers `SchoolModule`; Store access and rendering remain deferred until later application initialization or user interaction. The following `src/backup.js` uses School's `isValidCalendarDateString`, `validateSchoolItem`, and `validateLesson` in cross-domain backup validation, while the final `src/app.js` relies on the already registered `SchoolModule` when building navigation and rendering modules.
+
+The Backup declarations in `src/backup.js` depend on Core's `Store`, `createMemoryStore`, `runMigrations`, `DATA_VERSION`, `EventBus`, and `localDateKey`; Today's `DEFAULT_HABITS`; Training's `validateProfile`; Learning's Roadmap, LessonGuide, and timestamp declarations; and School's date, item, and lesson validators. Loading the layer only initializes constants, validator maps, and Roadmap identifiers. Store access, migrations, events, DOM APIs, Blob creation, export, preview, import, commit, and rollback remain deferred until their functions are called. The final `src/app.js` uses the Backup API from its settings UI and attaches the aggregate import-completed listener during the existing synchronous initialization. All seven JavaScript files are ordered source layers sharing one global lexical environment, not independently executable modules.
 
 ## Modules
 
@@ -192,11 +195,11 @@ If commit fails, rollback continues across all namespaces even if one restoratio
 
 ## Test infrastructure
 
-The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
+The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/backup.js`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
 
 ### Loader and in-memory adapter
 
-`tests/helpers/load-app.mjs` verifies that the document contains six classic external scripts in the exact order `./src/core.js`, `./src/today.js`, `./src/training.js`, `./src/learning.js`, `./src/school.js`, then `./src/app.js`, plus one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact seven local resources and rejects every other resource request. It serves `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, and `src/school.js` unchanged and appends a small explicit test adapter only to the in-memory response for the final `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
+`tests/helpers/load-app.mjs` verifies that the document contains seven classic external scripts in the exact order `./src/core.js`, `./src/today.js`, `./src/training.js`, `./src/learning.js`, `./src/school.js`, `./src/backup.js`, then `./src/app.js`, plus one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact eight local resources and rejects every other resource request. It serves `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, and `src/backup.js` unchanged and appends a small explicit test adapter only to the in-memory response for the final `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
 
 Every test or logical group receives a fresh JSDOM window and closes it after use. The loader provides deterministic isolation for:
 
@@ -205,7 +208,7 @@ Every test or logical group receives a fresh JSDOM window and closes it after us
 - localStorage and controlled write failures;
 - dialogs, Blob URLs, download links, and FileReader success or failure;
 - window errors, unhandled promise rejections, JSDOM errors, and console errors;
-- synthetic data with no network access; only the seven allowlisted production resources are served from memory.
+- synthetic data with no network access; only the eight allowlisted production resources are served from memory.
 
 ### Test layers
 
@@ -216,19 +219,19 @@ The suite is divided into explicit regression layers:
 3. module contracts, decisions, Day/Habits, Training, Learning/LessonGuide, and School;
 4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.
 
-`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
+`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/backup.js`, and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
 
 GitHub Actions performs a locked `npm ci` followed by `npm run check` for pushes and pull requests on Node.js 24.19.0.
 
 ### File boundary and limitations
 
-The eight-file structure is an intentional boundary. The structural check requires the exact relative paths and order of the six classic scripts, no inline script body or scheduling attributes, and a single external stylesheet with no `style` block. Any future approved split or module-system change must update the check and loader explicitly instead of silently testing a stale copy of the logic.
+The nine-file structure is an intentional boundary. The structural check requires the exact relative paths and order of the seven classic scripts, no inline script body or scheduling attributes, and a single external stylesheet with no `style` block. Any future approved split or module-system change must update the check and loader explicitly instead of silently testing a stale copy of the logic.
 
 JSDOM validates DOM structure and controlled browser-API contracts, but it does not fully reproduce layout, native file pickers, browser download behavior, or every browser-specific security boundary. Those areas still require proportional verification in a real browser.
 
 ## Current constraints
 
-- Application logic remains six ordered classic JavaScript files sharing one global lexical environment; the remaining backup and application layer still lives in `src/app.js`.
+- Application logic remains seven ordered classic JavaScript files sharing one global lexical environment; Backup and App are ordered source layers rather than independently executable modules.
 - Tests use the native Node.js runner and JSDOM rather than a browser automation framework.
 - Data remains tied to the current browser unless manually exported and imported.
 - There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.

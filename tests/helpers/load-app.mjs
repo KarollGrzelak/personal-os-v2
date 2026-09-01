@@ -8,15 +8,16 @@ process.env.TZ = 'Europe/Warsaw';
 
 const FIXED_NOW = '2026-08-20T08:00:00.000Z';
 const TEST_URL = 'https://personal-os.test/personal-os-v2/';
-const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/backup.js', './src/app.js'];
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/english.js', './src/backup.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
 const EXPECTED_CORE_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[0], TEST_URL).href;
 const EXPECTED_TODAY_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[1], TEST_URL).href;
 const EXPECTED_TRAINING_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[2], TEST_URL).href;
 const EXPECTED_LEARNING_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[3], TEST_URL).href;
 const EXPECTED_SCHOOL_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[4], TEST_URL).href;
-const EXPECTED_BACKUP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[5], TEST_URL).href;
-const EXPECTED_APP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[6], TEST_URL).href;
+const EXPECTED_ENGLISH_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[5], TEST_URL).href;
+const EXPECTED_BACKUP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[6], TEST_URL).href;
+const EXPECTED_APP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[7], TEST_URL).href;
 const EXPECTED_STYLESHEET_URL = new URL(EXPECTED_STYLESHEET_SOURCE, TEST_URL).href;
 const SCRIPT_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const SCRIPT_OPEN_PATTERN = /<script\b[^>]*>/gi;
@@ -46,8 +47,22 @@ const TEST_BRIDGE = `
   isValidCalendarDateString,
   isValidTimeString,
   isValidResourceUrl,
+  ENGLISH_LEVELS,
+  ENGLISH_FOCUSES,
+  ENGLISH_ACTIVITY_TYPES,
+  ENGLISH_TASK_PRIORITY,
+  validateEnglishProfile,
+  validateEnglishProfileValue,
+  normalizeEnglishProfile,
+  validateEnglishActivity,
+  validateEnglishActivities,
+  normalizeEnglishActivityContent,
+  EnglishModule,
+  renderEnglishResource,
   KNOWN_NAMESPACES,
   NAMESPACE_DEFAULTS,
+  REQUIRED_NAMESPACES_BY_APP_DATA_VERSION,
+  NAMESPACE_VALIDATORS,
   BACKUP_MAX_BYTES,
   BACKUP_MAX_DEPTH,
   BACKUP_FORMAT_ID,
@@ -74,6 +89,7 @@ const todayPath = path.join(projectRoot, 'src', 'today.js');
 const trainingPath = path.join(projectRoot, 'src', 'training.js');
 const learningPath = path.join(projectRoot, 'src', 'learning.js');
 const schoolPath = path.join(projectRoot, 'src', 'school.js');
+const englishPath = path.join(projectRoot, 'src', 'english.js');
 const backupPath = path.join(projectRoot, 'src', 'backup.js');
 const appPath = path.join(projectRoot, 'src', 'app.js');
 const stylesPath = path.join(projectRoot, 'src', 'styles.css');
@@ -182,6 +198,10 @@ export async function readSchoolSource() {
   return readFile(schoolPath, 'utf8');
 }
 
+export async function readEnglishSource() {
+  return readFile(englishPath, 'utf8');
+}
+
 export async function readBackupSource() {
   return readFile(backupPath, 'utf8');
 }
@@ -194,7 +214,7 @@ export async function readStylesSource() {
   return readFile(stylesPath, 'utf8');
 }
 
-function createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, backupSource, appSource, stylesSource, control) {
+function createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, englishSource, backupSource, appSource, stylesSource, control) {
   return {
     interceptors: [
       requestInterceptor(request => {
@@ -221,6 +241,11 @@ function createControlledResourceLoader(coreSource, todaySource, trainingSource,
         }
         if (request.url === EXPECTED_SCHOOL_SCRIPT_URL) {
           return new Response(schoolSource, {
+            headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
+          });
+        }
+        if (request.url === EXPECTED_ENGLISH_SCRIPT_URL) {
+          return new Response(englishSource, {
             headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
           });
         }
@@ -265,20 +290,21 @@ export async function loadApp({
   storage = {},
   unexpectedResourceUrl = null
 } = {}) {
-  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, backupSource, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, englishSource, backupSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
     readCoreSource(),
     readTodaySource(),
     readTrainingSource(),
     readLearningSource(),
     readSchoolSource(),
+    readEnglishSource(),
     readBackupSource(),
     readAppSource(),
     readStylesSource()
   ]);
   const inspection = inspectIndexHtml(html);
   if (!inspection.isClassic || !inspection.scriptsAreAdjacent || !inspection.scriptsAtBodyEnd) {
-    throw new Error('index.html nie zawiera oczekiwanych sąsiadujących klasycznych skryptów core.js → today.js → training.js → learning.js → school.js → backup.js → app.js na końcu body.');
+    throw new Error('index.html nie zawiera oczekiwanych sąsiadujących klasycznych skryptów core.js → today.js → training.js → learning.js → school.js → english.js → backup.js → app.js na końcu body.');
   }
   if (inspection.styleBlockCount !== 0
       || inspection.stylesheetCount !== 1
@@ -295,7 +321,11 @@ export async function loadApp({
   const dialogs = {
     alerts: [],
     confirms: [],
-    prompts: []
+    prompts: [],
+    confirmOutcomes: [],
+    enqueueConfirm(value) {
+      this.confirmOutcomes.push(value === true);
+    }
   };
   const downloads = [];
   const anchorClicks = [];
@@ -331,7 +361,7 @@ export async function loadApp({
   virtualConsole.on('error', (...args) => errors.console.push(args));
   virtualConsole.on('jsdomError', error => errors.jsdom.push(error));
   const resourceControl = { blocked: [], requests: [] };
-  const resourceLoader = createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, backupSource, appSource, stylesSource, resourceControl);
+  const resourceLoader = createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, englishSource, backupSource, appSource, stylesSource, resourceControl);
 
   const fixedTimestamp = new Date(fixedNow).getTime();
   if (Number.isNaN(fixedTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);
@@ -404,7 +434,7 @@ export async function loadApp({
       window.alert = message => dialogs.alerts.push(String(message));
       window.confirm = message => {
         dialogs.confirms.push(String(message));
-        return false;
+        return dialogs.confirmOutcomes.shift() ?? false;
       };
       window.prompt = (message, defaultValue = '') => {
         dialogs.prompts.push({ message: String(message), defaultValue: String(defaultValue) });

@@ -96,6 +96,32 @@ export function schoolItem(overrides = {}) {
   };
 }
 
+export function englishProfile(overrides = {}) {
+  return {
+    enabled: true,
+    selfAssessedLevel: 'unknown',
+    weeklyMinutes: 120,
+    focus: 'balanced',
+    ...overrides
+  };
+}
+
+export function englishActivity(overrides = {}) {
+  return {
+    id: 'eng-synthetic-activity',
+    type: 'technical-reading',
+    title: 'Read synthetic API documentation',
+    objective: 'Understand one synthetic API concept in English',
+    resourceUrl: 'https://example.test/english-resource',
+    estimatedMinutes: 20,
+    difficulty: 2,
+    status: 'todo',
+    completedDate: null,
+    current: false,
+    ...overrides
+  };
+}
+
 export function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -137,5 +163,19 @@ export function populatedBackupEnvelope(api) {
     completedDate: null,
     activeDuringVacation: false
   }];
+  envelope.data['english:profile'] = englishProfile();
+  envelope.data['english:activities'] = [
+    englishActivity({
+      status: 'done',
+      completedDate: '2026-08-20'
+    }),
+    englishActivity({
+      id: 'eng-synthetic-current',
+      title: 'Listen to a synthetic English recording',
+      type: 'listening',
+      resourceUrl: null,
+      current: true
+    })
+  ];
   return envelope;
 }

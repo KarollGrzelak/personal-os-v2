@@ -136,7 +136,7 @@ function createMemoryStore() {
    wzgledem poprzednich Krokow - to wylacznie dependency injection
    store'a, nie zmiana logiki.
    ============================================================ */
-const DATA_VERSION = 5; // 1 = pierwotny schemat Sandbox (done: boolean), 2 = status enum (Krok 3), 3 = it:criteriaDone jako rekord {status, completedDate} (Krok 5), 4 = school:items dostaje activeDuringVacation (Krok 6 poprawki), 5 = it:lessonGuides formalizacja modelu LessonGuide (Krok 7)
+const DATA_VERSION = 6; // 1 = pierwotny schemat Sandbox (done: boolean), 2 = status enum (Krok 3), 3 = it:criteriaDone jako rekord {status, completedDate} (Krok 5), 4 = school:items dostaje activeDuringVacation (Krok 6 poprawki), 5 = it:lessonGuides formalizacja modelu LessonGuide (Krok 7), 6 = english:profile i english:activities (Krok 11.1B)
 
 const MIGRATIONS = {
   2: (store) => {
@@ -202,6 +202,15 @@ const MIGRATIONS = {
       };
     }
     store.set('it:lessonGuides', migrated);
+  },
+  6: (store) => {
+    const missing = Object.freeze({});
+    if (store.get('english:profile', missing) === missing) {
+      store.set('english:profile', null);
+    }
+    if (store.get('english:activities', missing) === missing) {
+      store.set('english:activities', []);
+    }
   }
 };
 
@@ -276,4 +285,3 @@ const Router = (() => {
   }
   return { go, current: () => currentView };
 })();
-

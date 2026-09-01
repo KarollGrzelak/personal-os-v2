@@ -27,7 +27,8 @@ const KNOWN_NAMESPACES = [
   'dayRecords', 'habitDefs', 'habitLogs', 'ui:timeBudget',
   'training:profile', 'training:sessions', 'training:exerciseLogs',
   'it:stageStatuses', 'it:criteriaDone', 'it:lessonGuides', 'it:lessonGuidesRecoveredContainer',
-  'school:mode', 'school:items', 'school:schedule', 'sandbox:tasks'
+  'school:mode', 'school:items', 'school:schedule',
+  'english:profile', 'english:activities', 'sandbox:tasks'
 ];
 
 // Fallback dla każdego namespace'u — MUSI być identyczny z fallbackiem,
@@ -50,6 +51,8 @@ const NAMESPACE_DEFAULTS = {
   'school:mode': 'school_year',
   'school:items': [],
   'school:schedule': [],
+  'english:profile': null,
+  'english:activities': [],
   'sandbox:tasks': null
 };
 
@@ -73,6 +76,15 @@ const REQUIRED_NAMESPACES_BY_APP_DATA_VERSION = {
     // namespace, którego istnienie jest z definicji warunkowe (tylko
     // po awaryjnym odzysku uszkodzonego kontenera w migracji 5),
     // niezależnie od appDataVersion.
+  ],
+  6: [
+    'dayRecords', 'habitDefs', 'habitLogs', 'ui:timeBudget',
+    'training:profile', 'training:sessions', 'training:exerciseLogs',
+    'it:stageStatuses', 'it:criteriaDone', 'it:lessonGuides',
+    'school:mode', 'school:items', 'school:schedule',
+    'english:profile', 'english:activities', 'sandbox:tasks'
+    // it:lessonGuidesRecoveredContainer CELOWO POMINIĘTY — namespace
+    // odzysku awaryjnego pozostaje opcjonalny również w wersji 6.
   ]
 };
 
@@ -299,6 +311,8 @@ const NAMESPACE_VALIDATORS = {
   'school:mode': validateSchoolModeValue,
   'school:items': validateSchoolItemsArray,
   'school:schedule': validateScheduleArray,
+  'english:profile': validateEnglishProfileValue,
+  'english:activities': validateEnglishActivities,
   'sandbox:tasks': validateSandboxTasksArray
 };
 
@@ -560,9 +574,10 @@ function previewBackupFile(rawJsonText) {
     trainingSessions: Object.keys(staging.get('training:sessions', {})).length,
     criteriaDone: Object.values(staging.get('it:criteriaDone', {})).filter(c => c.status === 'done').length,
     schoolItems: staging.get('school:items', []).length,
-    lessonGuides: Object.keys(staging.get('it:lessonGuides', {})).length
+    lessonGuides: Object.keys(staging.get('it:lessonGuides', {})).length,
+    englishActivities: staging.get('english:activities', []).length,
+    englishActivitiesDone: staging.get('english:activities', []).filter(activity => activity.status === 'done').length
   };
 
   return { ok: true, envelope: parseResult.envelope, stats, staging };
 }
-

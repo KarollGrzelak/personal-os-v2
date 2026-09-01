@@ -4,6 +4,8 @@ import {
   FIXED_THURSDAY,
   backupEnvelope,
   cloneJson,
+  englishActivity,
+  englishProfile,
   populatedBackupEnvelope
 } from './helpers/fixtures.mjs';
 import { loadApp, toPlain } from './helpers/load-app.mjs';
@@ -34,7 +36,7 @@ test('eksport tworzy poprawną kopertę wyłącznie ze znanych namespace’ów i
 
   assert.equal(envelope.backupFormat, 'personal-os-v2-backup');
   assert.equal(envelope.backupVersion, 1);
-  assert.equal(envelope.appDataVersion, 5);
+  assert.equal(envelope.appDataVersion, 6);
   assert.equal(envelope.exportedAt, FIXED_THURSDAY);
   assert.deepEqual(
     Object.keys(envelope.data).sort(),
@@ -96,7 +98,9 @@ test('preview aktualnego backupu zwraca statystyki i staging bez dotykania prawd
     trainingSessions: 1,
     criteriaDone: 1,
     schoolItems: 1,
-    lessonGuides: 1
+    lessonGuides: 1,
+    englishActivities: 2,
+    englishActivitiesDone: 1
   });
   assert.deepEqual(toPlain(preview.staging.get('dayRecords', null)), envelope.data.dayRecords);
   assert.deepEqual(toPlain(app.api.Store.get('dayRecords', null)), {
@@ -106,7 +110,7 @@ test('preview aktualnego backupu zwraca statystyki i staging bez dotykania prawd
   assert.deepEqual(storeEvents, []);
 });
 
-test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 1→5', async t => {
+test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 1→6', async t => {
   const app = await loadApp({ fixedNow: FIXED_THURSDAY });
   t.after(() => app.close());
   const criterionId = app.api.ROADMAP_STAGES[0].criteria[0].id;
@@ -126,7 +130,7 @@ test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 
   const staged = app.api.stageAndValidateBackup(parsed.envelope);
 
   assert.equal(staged.ok, true);
-  assert.equal(staged.staging.get('meta:schemaVersion', null), 5);
+  assert.equal(staged.staging.get('meta:schemaVersion', null), 6);
   assert.deepEqual(toPlain(staged.staging.get('sandbox:tasks', null)), [{
     id: 'synthetic-old-task', title: 'Synthetic old task', status: 'done', completedDate: null
   }]);
@@ -135,10 +139,12 @@ test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 
   });
   assert.equal(staged.staging.get('school:mode', null), 'school_year');
   assert.deepEqual(toPlain(staged.staging.get('school:items', null)), []);
+  assert.equal(staged.staging.get('english:profile', 'missing'), null);
+  assert.deepEqual(toPlain(staged.staging.get('english:activities', null)), []);
   assert.deepEqual(toPlain(staged.staging.get('it:stageStatuses', null)), toPlain(app.api.RoadmapEngine.deriveInitialStatuses()));
 });
 
-test('staging wymaga danych v5, odrzuca stageStatuses null i oczyszcza błędny opcjonalny recovery container', async t => {
+test('staging wymaga danych v6, odrzuca stageStatuses null i oczyszcza błędny opcjonalny recovery container', async t => {
   const app = await loadApp({ fixedNow: FIXED_THURSDAY });
   t.after(() => app.close());
 
@@ -159,6 +165,64 @@ test('staging wymaga danych v5, odrzuca stageStatuses null i oczyszcza błędny 
   const recoveryResult = app.api.stageAndValidateBackup(optionalRecovery);
   assert.equal(recoveryResult.ok, true);
   assert.equal(recoveryResult.staging.get('it:lessonGuidesRecoveredContainer', 'missing'), null);
+});
+
+test('backup v5 może nie zawierać English, a v6 wymaga obu namespace’ów i akceptuje profil null', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+
+  const versionFive = backupEnvelope(app.api);
+  versionFive.appDataVersion = 5;
+  delete versionFive.data['english:profile'];
+  delete versionFive.data['english:activities'];
+  const oldResult = app.api.stageAndValidateBackup(versionFive);
+  assert.equal(oldResult.ok, true);
+  assert.equal(oldResult.staging.get('meta:schemaVersion', null), 6);
+  assert.equal(oldResult.staging.get('english:profile', 'missing'), null);
+  assert.deepEqual(toPlain(oldResult.staging.get('english:activities', null)), []);
+
+  const missingProfile = backupEnvelope(app.api);
+  delete missingProfile.data['english:profile'];
+  const missingProfileResult = toPlain(app.api.stageAndValidateBackup(missingProfile));
+  assert.equal(missingProfileResult.ok, false);
+  assert.match(missingProfileResult.errors.join(' '), /wymaganych danych.*english:profile/);
+
+  const missingActivities = backupEnvelope(app.api);
+  delete missingActivities.data['english:activities'];
+  const missingActivitiesResult = toPlain(app.api.stageAndValidateBackup(missingActivities));
+  assert.equal(missingActivitiesResult.ok, false);
+  assert.match(missingActivitiesResult.errors.join(' '), /wymaganych danych.*english:activities/);
+
+  const nullProfile = backupEnvelope(app.api);
+  nullProfile.data['english:profile'] = null;
+  assert.equal(app.api.stageAndValidateBackup(nullProfile).ok, true);
+
+  const storageBeforeInvalidVariants = localStorageSnapshot(app.window);
+  const profileMissingFocus = englishProfile();
+  delete profileMissingFocus.focus;
+  for (const invalidProfile of [
+    profileMissingFocus,
+    englishProfile({ enabled: 'true' }),
+    englishProfile({ weeklyMinutes: 14 })
+  ]) {
+    const invalidEnvelope = backupEnvelope(app.api);
+    invalidEnvelope.data['english:profile'] = invalidProfile;
+    const invalidResult = toPlain(app.api.stageAndValidateBackup(invalidEnvelope));
+    assert.equal(invalidResult.ok, false);
+    assert.match(invalidResult.errors.join(' '), /english:profile/);
+  }
+  for (const invalidActivities of [
+    [englishActivity({ status: 'done', completedDate: null })],
+    [englishActivity({ id: 'first-current', current: true }), englishActivity({ id: 'second-current', current: true })],
+    { synthetic: 'invalid-container' }
+  ]) {
+    const invalidEnvelope = backupEnvelope(app.api);
+    invalidEnvelope.data['english:activities'] = invalidActivities;
+    const invalidResult = toPlain(app.api.stageAndValidateBackup(invalidEnvelope));
+    assert.equal(invalidResult.ok, false);
+    assert.match(invalidResult.errors.join(' '), /english:activities/);
+  }
+  assert.deepEqual(localStorageSnapshot(app.window), storageBeforeInvalidVariants);
 });
 
 test('commit Replace zapisuje wszystkie namespace’y strict+silent i emituje jedno zdarzenie zbiorcze', async t => {
@@ -232,6 +296,62 @@ test('awaria w środku commita przywraca wszystkie namespace’y i zwraca ROLLBA
     toPlain(app.api.KNOWN_NAMESPACES).map(namespace => `v2:${namespace}`)
   );
   assert.deepEqual(storeSnapshot(app.api), before);
+});
+
+test('awaria commita dokładnie na namespace’ach English przywraca oba z rollbacku', async () => {
+  for (const failingNamespace of ['english:profile', 'english:activities']) {
+    const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+    try {
+      app.api.Store.set('english:profile', englishProfile({ enabled: false, weeklyMinutes: 15, focus: 'general' }));
+      app.api.Store.set('english:activities', [englishActivity({ id: 'english-before-import' })]);
+      const before = storeSnapshot(app.api);
+      const staged = app.api.stageAndValidateBackup(populatedBackupEnvelope(app.api));
+      assert.equal(staged.ok, true);
+      const commitFailureIndex = app.api.KNOWN_NAMESPACES.indexOf(failingNamespace) + 1;
+      app.storageControl.reset();
+      app.storageControl.failWhen(attempt => attempt.index === commitFailureIndex);
+
+      const result = toPlain(app.api.commitStagedImport(staged.staging));
+
+      assert.equal(result.ok, false, failingNamespace);
+      assert.equal(result.status, 'IMPORT_FAILED_ROLLBACK_OK', failingNamespace);
+      assert.equal(app.storageControl.attempts[commitFailureIndex - 1].key, `v2:${failingNamespace}`);
+      assert.equal(app.storageControl.attempts.length, commitFailureIndex + app.api.KNOWN_NAMESPACES.length);
+      assert.deepEqual(storeSnapshot(app.api), before, failingNamespace);
+      assert.deepEqual(toPlain(app.api.Store.get('english:profile', null)), before['english:profile'], failingNamespace);
+      assert.deepEqual(toPlain(app.api.Store.get('english:activities', null)), before['english:activities'], failingNamespace);
+    } finally {
+      app.close();
+    }
+  }
+});
+
+test('częściowo nieudany rollback raportuje dokładny namespace English', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const profileBefore = englishProfile({ enabled: false, weeklyMinutes: 15, focus: 'general' });
+  const activitiesBefore = [englishActivity({ id: 'english-before-partial-rollback' })];
+  app.api.Store.set('english:profile', profileBefore);
+  app.api.Store.set('english:activities', activitiesBefore);
+  const staged = app.api.stageAndValidateBackup(populatedBackupEnvelope(app.api));
+  assert.equal(staged.ok, true);
+  const activitiesCommitFailureIndex = app.api.KNOWN_NAMESPACES.indexOf('english:activities') + 1;
+  const profileRollbackFailureIndex = activitiesCommitFailureIndex
+    + app.api.KNOWN_NAMESPACES.indexOf('english:profile') + 1;
+  app.storageControl.reset();
+  app.storageControl.failWhen(attempt => [activitiesCommitFailureIndex, profileRollbackFailureIndex].includes(attempt.index));
+
+  const result = toPlain(app.api.commitStagedImport(staged.staging));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'IMPORT_FAILED_ROLLBACK_FAILED');
+  assert.deepEqual(result.failedNamespaces, ['english:profile']);
+  assert.deepEqual(
+    toPlain(app.api.Store.get('english:profile', null)),
+    toPlain(staged.staging.get('english:profile', null)),
+    'nieudany rollback profilu pozostawia wartość ze stagingu'
+  );
+  assert.deepEqual(toPlain(app.api.Store.get('english:activities', null)), activitiesBefore);
 });
 
 test('awarie rollbacku zwracają dokładne namespace’y i UI nie sugeruje pełnego odzyskania', async t => {

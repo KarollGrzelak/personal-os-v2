@@ -30,7 +30,7 @@ test('parser odrzuca pusty tekst, błędny JSON i nieprawidłowe warianty kopert
     [JSON.stringify([]), /Nieprawidłowa struktura/],
     [JSON.stringify({ ...base, backupFormat: 'synthetic-unknown-format' }), /Nieznany format/],
     [JSON.stringify({ ...base, backupVersion: 999 }), /Nieobsługiwana wersja/],
-    [JSON.stringify({ ...base, appDataVersion: 6 }), /nowszej wersji Personal OS/],
+    [JSON.stringify({ ...base, appDataVersion: 7 }), /nowszej wersji Personal OS/],
     [JSON.stringify({ ...base, exportedAt: 'not-an-iso-date' }), /Nieprawidłowa data eksportu/],
     [JSON.stringify({ ...base, data: null }), /Nieprawidłowa zawartość/]
   ];
@@ -152,6 +152,8 @@ test('błędne dane każdej krytycznej domeny odrzucają cały import', async t 
     'school:mode': 'synthetic-invalid-mode',
     'school:items': {},
     'school:schedule': {},
+    'english:profile': [],
+    'english:activities': {},
     'sandbox:tasks': {}
   };
 

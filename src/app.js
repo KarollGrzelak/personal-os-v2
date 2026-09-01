@@ -104,7 +104,9 @@ function handleBackupFileSelected(rawJsonText) {
         Sesje treningowe: ${preview.stats.trainingSessions}<br>
         Ukończone kryteria IT: ${preview.stats.criteriaDone}<br>
         Elementy szkolne: ${preview.stats.schoolItems}<br>
-        Przewodniki LessonGuide: ${preview.stats.lessonGuides}
+        Przewodniki LessonGuide: ${preview.stats.lessonGuides}<br>
+        Aktywności angielskie: ${preview.stats.englishActivities}<br>
+        Ukończone aktywności angielskie: ${preview.stats.englishActivitiesDone}
       </div>
       <div class="banner-warn" style="margin-top:10px;">⚠ Import ZASTĄPI całkowicie Twoje aktualne dane zawartością tego pliku (tryb Replace). Tej operacji nie można cofnąć po ostatecznym potwierdzeniu.</div>
       <div class="field-row" style="margin-top:8px;">

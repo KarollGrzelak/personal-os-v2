@@ -30,7 +30,7 @@ test('parser odrzuca pusty tekst, błędny JSON i nieprawidłowe warianty kopert
     [JSON.stringify([]), /Nieprawidłowa struktura/],
     [JSON.stringify({ ...base, backupFormat: 'synthetic-unknown-format' }), /Nieznany format/],
     [JSON.stringify({ ...base, backupVersion: 999 }), /Nieobsługiwana wersja/],
-    [JSON.stringify({ ...base, appDataVersion: 7 }), /nowszej wersji Personal OS/],
+    [JSON.stringify({ ...base, appDataVersion: 8 }), /nowszej wersji Personal OS/],
     [JSON.stringify({ ...base, exportedAt: 'not-an-iso-date' }), /Nieprawidłowa data eksportu/],
     [JSON.stringify({ ...base, data: null }), /Nieprawidłowa zawartość/]
   ];
@@ -152,6 +152,7 @@ test('błędne dane każdej krytycznej domeny odrzucają cały import', async t 
     'school:mode': 'synthetic-invalid-mode',
     'school:items': {},
     'school:schedule': {},
+    'availability:configuration': { synthetic: 'invalid-availability' },
     'english:profile': [],
     'english:activities': {},
     'sandbox:tasks': {}
@@ -274,6 +275,7 @@ test('poprawny FileReader prowadzi do preview bez zapisu', async t => {
 
   assert.equal(app.fileReaderControl.calls.length, 1);
   assert.match(app.document.getElementById('backup-import-panel').textContent, /Podgląd kopii przed przywróceniem/);
+  assert.match(app.document.getElementById('backup-import-panel').textContent, /Dostępność skonfigurowana: tak/);
   assert.deepEqual(toPlain(app.api.Store.get('dayRecords', {})), before);
   assert.equal(completedEvents, 0);
 });
@@ -284,6 +286,7 @@ test('anulowanie i pierwszy etap potwierdzenia nie zapisują; Replace następuje
   app.api.Store.set('dayRecords', { '2026-08-01': { date: '2026-08-01', energyScore: 10 } });
   const before = toPlain(app.api.Store.get('dayRecords', {}));
   const envelope = populatedBackupEnvelope(app.api);
+  assert.match(app.document.getElementById('availability-settings-card').textContent, /nie jest skonfigurowana/i);
 
   app.api.handleBackupFileSelected(JSON.stringify(envelope));
   app.document.getElementById('backup-import-cancel').click();
@@ -295,7 +298,13 @@ test('anulowanie i pierwszy etap potwierdzenia nie zapisują; Replace następuje
   assert.notEqual(app.document.getElementById('backup-import-confirm2-wrap').style.display, 'none');
   assert.deepEqual(toPlain(app.api.Store.get('dayRecords', {})), before);
 
+  const panelBeforeReplace = app.document.getElementById('backup-import-panel');
+  const cardBeforeReplace = app.document.querySelector('[data-availability-card]');
   app.document.getElementById('backup-import-confirm2').click();
   assert.deepEqual(toPlain(app.api.Store.get('dayRecords', {})), envelope.data.dayRecords);
   assert.match(app.document.getElementById('backup-import-panel').textContent, /Import zakończony sukcesem/);
+  assert.doesNotMatch(app.document.getElementById('availability-settings-card').textContent, /nie jest skonfigurowana/i);
+  assert.match(app.document.getElementById('availability-settings-card').textContent, /2026-08-20/);
+  assert.equal(app.document.getElementById('backup-import-panel'), panelBeforeReplace, 'panel backupu nie został przebudowany');
+  assert.notEqual(app.document.querySelector('[data-availability-card]'), cardBeforeReplace, 'odświeżona została karta Availability');
 });

@@ -47,10 +47,11 @@ function renderSettingsView() {
   const container = document.getElementById('view-settings');
   if (!container) return;
   container.innerHTML = `
+    <div id="availability-settings-card"></div>
     <div class="card">
       <h3>💾 Kopia zapasowa</h3>
       <p>Personal OS nie ma backendu — wszystkie dane żyją wyłącznie w tej przeglądarce. Eksportuj kopię, żeby zabezpieczyć się przed wyczyszczeniem danych albo zmianą urządzenia.</p>
-      <p style="font-size:12px;color:var(--text3);">Plik zawiera Twoje prywatne dane Personal OS (postęp nauki, dane szkolne, sesje treningowe) — przechowuj go tak ostrożnie jak inne prywatne pliki.</p>
+      <p style="font-size:12px;color:var(--text3);">Plik zawiera Twoje prywatne dane Personal OS (postęp nauki, dane szkolne, zadeklarowaną dostępność, sesje treningowe) — przechowuj go tak ostrożnie jak inne prywatne pliki.</p>
       <button class="ghost" id="backup-export-btn">⬇ Eksportuj kopię</button>
     </div>
     <div class="card">
@@ -61,6 +62,8 @@ function renderSettingsView() {
       <div id="backup-import-panel" style="margin-top:10px;"></div>
     </div>
   `;
+
+  renderAvailabilitySettings();
 
   container.querySelector('#backup-export-btn').addEventListener('click', () => {
     downloadBackupFile();
@@ -105,6 +108,9 @@ function handleBackupFileSelected(rawJsonText) {
         Ukończone kryteria IT: ${preview.stats.criteriaDone}<br>
         Elementy szkolne: ${preview.stats.schoolItems}<br>
         Przewodniki LessonGuide: ${preview.stats.lessonGuides}<br>
+        Dostępność skonfigurowana: ${preview.stats.availabilityConfigured ? 'tak' : 'nie'}<br>
+        Tygodniowe przedziały dostępności: ${preview.stats.availabilityWeeklyIntervals}<br>
+        Wyjątki dostępności: ${preview.stats.availabilityExceptions}<br>
         Aktywności angielskie: ${preview.stats.englishActivities}<br>
         Ukończone aktywności angielskie: ${preview.stats.englishActivitiesDone}
       </div>
@@ -169,6 +175,8 @@ function refreshWholeAppUI() {
   renderDzis();
   renderSettingsView();
   EventBus.on('backup:importCompleted', refreshWholeAppUI); // jeden zbiorczy re-render po udanym Replace
+  EventBus.on('backup:importCompleted', renderAvailabilitySettings); // tylko karta Availability; panel backupu zachowuje komunikat końcowy
+  EventBus.on('availability:changed', renderAvailabilitySettings);
 
   // każdy moduł renderuje się do własnego kontenera .view-<id>
   // (Core tworzy kontener dynamicznie, jeśli moduł go nie ma w HTML)

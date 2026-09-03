@@ -122,6 +122,33 @@ export function englishActivity(overrides = {}) {
   };
 }
 
+export function availabilityInterval(overrides = {}) {
+  return { start: '17:00', end: '18:30', ...overrides };
+}
+
+export function availabilityWeeklySchedule(overrides = {}) {
+  const byWeekday = overrides.byWeekday ?? {
+    1: [availabilityInterval()],
+    4: [availabilityInterval({ start: '20:00', end: '24:00' })]
+  };
+  return Array.from({ length: 7 }, (_, weekday) => ({
+    weekday,
+    intervals: cloneJson(byWeekday[weekday] ?? [])
+  }));
+}
+
+export function availabilityException(overrides = {}) {
+  return { date: '2026-08-20', kind: 'unavailable', intervals: [], ...overrides };
+}
+
+export function availabilityConfiguration(overrides = {}) {
+  return {
+    weeklySchedule: availabilityWeeklySchedule(),
+    exceptions: [availabilityException()],
+    ...overrides
+  };
+}
+
 export function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -163,6 +190,7 @@ export function populatedBackupEnvelope(api) {
     completedDate: null,
     activeDuringVacation: false
   }];
+  envelope.data['availability:configuration'] = availabilityConfiguration();
   envelope.data['english:profile'] = englishProfile();
   envelope.data['english:activities'] = [
     englishActivity({

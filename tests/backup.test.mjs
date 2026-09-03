@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   FIXED_THURSDAY,
+  availabilityConfiguration,
   backupEnvelope,
   cloneJson,
   englishActivity,
@@ -36,7 +37,7 @@ test('eksport tworzy poprawną kopertę wyłącznie ze znanych namespace’ów i
 
   assert.equal(envelope.backupFormat, 'personal-os-v2-backup');
   assert.equal(envelope.backupVersion, 1);
-  assert.equal(envelope.appDataVersion, 6);
+  assert.equal(envelope.appDataVersion, 7);
   assert.equal(envelope.exportedAt, FIXED_THURSDAY);
   assert.deepEqual(
     Object.keys(envelope.data).sort(),
@@ -99,6 +100,9 @@ test('preview aktualnego backupu zwraca statystyki i staging bez dotykania prawd
     criteriaDone: 1,
     schoolItems: 1,
     lessonGuides: 1,
+    availabilityConfigured: true,
+    availabilityWeeklyIntervals: 2,
+    availabilityExceptions: 1,
     englishActivities: 2,
     englishActivitiesDone: 1
   });
@@ -110,7 +114,7 @@ test('preview aktualnego backupu zwraca statystyki i staging bez dotykania prawd
   assert.deepEqual(storeEvents, []);
 });
 
-test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 1→6', async t => {
+test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 1→7', async t => {
   const app = await loadApp({ fixedNow: FIXED_THURSDAY });
   t.after(() => app.close());
   const criterionId = app.api.ROADMAP_STAGES[0].criteria[0].id;
@@ -130,7 +134,7 @@ test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 
   const staged = app.api.stageAndValidateBackup(parsed.envelope);
 
   assert.equal(staged.ok, true);
-  assert.equal(staged.staging.get('meta:schemaVersion', null), 6);
+  assert.equal(staged.staging.get('meta:schemaVersion', null), 7);
   assert.deepEqual(toPlain(staged.staging.get('sandbox:tasks', null)), [{
     id: 'synthetic-old-task', title: 'Synthetic old task', status: 'done', completedDate: null
   }]);
@@ -141,10 +145,11 @@ test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 
   assert.deepEqual(toPlain(staged.staging.get('school:items', null)), []);
   assert.equal(staged.staging.get('english:profile', 'missing'), null);
   assert.deepEqual(toPlain(staged.staging.get('english:activities', null)), []);
+  assert.equal(staged.staging.get('availability:configuration', 'missing'), null);
   assert.deepEqual(toPlain(staged.staging.get('it:stageStatuses', null)), toPlain(app.api.RoadmapEngine.deriveInitialStatuses()));
 });
 
-test('staging wymaga danych v6, odrzuca stageStatuses null i oczyszcza błędny opcjonalny recovery container', async t => {
+test('staging wymaga danych v7, odrzuca stageStatuses null i oczyszcza błędny opcjonalny recovery container', async t => {
   const app = await loadApp({ fixedNow: FIXED_THURSDAY });
   t.after(() => app.close());
 
@@ -177,7 +182,7 @@ test('backup v5 może nie zawierać English, a v6 wymaga obu namespace’ów i a
   delete versionFive.data['english:activities'];
   const oldResult = app.api.stageAndValidateBackup(versionFive);
   assert.equal(oldResult.ok, true);
-  assert.equal(oldResult.staging.get('meta:schemaVersion', null), 6);
+  assert.equal(oldResult.staging.get('meta:schemaVersion', null), 7);
   assert.equal(oldResult.staging.get('english:profile', 'missing'), null);
   assert.deepEqual(toPlain(oldResult.staging.get('english:activities', null)), []);
 
@@ -223,6 +228,40 @@ test('backup v5 może nie zawierać English, a v6 wymaga obu namespace’ów i a
     assert.match(invalidResult.errors.join(' '), /english:activities/);
   }
   assert.deepEqual(localStorageSnapshot(app.window), storageBeforeInvalidVariants);
+});
+
+test('backup v6 dostaje Availability null, a v7 wymaga namespace’u i jego ścisłej walidacji', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+
+  const versionSix = backupEnvelope(app.api);
+  versionSix.appDataVersion = 6;
+  delete versionSix.data['availability:configuration'];
+  const migrated = app.api.stageAndValidateBackup(versionSix);
+  assert.equal(migrated.ok, true);
+  assert.equal(migrated.staging.get('meta:schemaVersion', null), 7);
+  assert.equal(migrated.staging.get('availability:configuration', 'missing'), null);
+
+  const missingCurrent = backupEnvelope(app.api);
+  delete missingCurrent.data['availability:configuration'];
+  const missingResult = toPlain(app.api.stageAndValidateBackup(missingCurrent));
+  assert.equal(missingResult.ok, false);
+  assert.match(missingResult.errors.join(' '), /wymaganych danych.*availability:configuration/);
+
+  const currentNull = backupEnvelope(app.api);
+  currentNull.data['availability:configuration'] = null;
+  assert.equal(app.api.stageAndValidateBackup(currentNull).ok, true);
+
+  const invalidCurrent = backupEnvelope(app.api);
+  const invalidConfiguration = availabilityConfiguration();
+  invalidConfiguration.weeklySchedule[1].intervals = [
+    { start: '18:00', end: '19:00' },
+    { start: '08:00', end: '09:00' }
+  ];
+  invalidCurrent.data['availability:configuration'] = invalidConfiguration;
+  const invalidResult = toPlain(app.api.stageAndValidateBackup(invalidCurrent));
+  assert.equal(invalidResult.ok, false);
+  assert.match(invalidResult.errors.join(' '), /availability:configuration.*kanonicznej/);
 });
 
 test('commit Replace zapisuje wszystkie namespace’y strict+silent i emituje jedno zdarzenie zbiorcze', async t => {
@@ -324,6 +363,50 @@ test('awaria commita dokładnie na namespace’ach English przywraca oba z rollb
       app.close();
     }
   }
+});
+
+test('awaria commita na Availability przywraca atomową konfigurację z rollbacku', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const beforeConfiguration = availabilityConfiguration({ exceptions: [] });
+  app.api.Store.set('availability:configuration', beforeConfiguration, { strict: true });
+  const before = storeSnapshot(app.api);
+  const staged = app.api.stageAndValidateBackup(populatedBackupEnvelope(app.api));
+  assert.equal(staged.ok, true);
+  const commitFailureIndex = app.api.KNOWN_NAMESPACES.indexOf('availability:configuration') + 1;
+  app.storageControl.reset();
+  app.storageControl.failWhen(attempt => attempt.index === commitFailureIndex);
+
+  const result = toPlain(app.api.commitStagedImport(staged.staging));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'IMPORT_FAILED_ROLLBACK_OK');
+  assert.equal(app.storageControl.attempts[commitFailureIndex - 1].key, 'v2:availability:configuration');
+  assert.deepEqual(storeSnapshot(app.api), before);
+});
+
+test('częściowo nieudany rollback raportuje dokładnie Availability', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const beforeConfiguration = availabilityConfiguration({ exceptions: [] });
+  app.api.Store.set('availability:configuration', beforeConfiguration, { strict: true });
+  const staged = app.api.stageAndValidateBackup(populatedBackupEnvelope(app.api));
+  assert.equal(staged.ok, true);
+  const commitFailureIndex = app.api.KNOWN_NAMESPACES.indexOf('english:profile') + 1;
+  const rollbackFailureIndex = commitFailureIndex
+    + app.api.KNOWN_NAMESPACES.indexOf('availability:configuration') + 1;
+  app.storageControl.reset();
+  app.storageControl.failWhen(attempt => [commitFailureIndex, rollbackFailureIndex].includes(attempt.index));
+
+  const result = toPlain(app.api.commitStagedImport(staged.staging));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'IMPORT_FAILED_ROLLBACK_FAILED');
+  assert.deepEqual(result.failedNamespaces, ['availability:configuration']);
+  assert.deepEqual(
+    toPlain(app.api.Store.get('availability:configuration', null)),
+    toPlain(staged.staging.get('availability:configuration', null))
+  );
 });
 
 test('częściowo nieudany rollback raportuje dokładny namespace English', async t => {

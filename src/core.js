@@ -136,7 +136,7 @@ function createMemoryStore() {
    wzgledem poprzednich Krokow - to wylacznie dependency injection
    store'a, nie zmiana logiki.
    ============================================================ */
-const DATA_VERSION = 6; // 1 = pierwotny schemat Sandbox (done: boolean), 2 = status enum (Krok 3), 3 = it:criteriaDone jako rekord {status, completedDate} (Krok 5), 4 = school:items dostaje activeDuringVacation (Krok 6 poprawki), 5 = it:lessonGuides formalizacja modelu LessonGuide (Krok 7), 6 = english:profile i english:activities (Krok 11.1B)
+const DATA_VERSION = 7; // 1 = pierwotny schemat Sandbox (done: boolean), 2 = status enum (Krok 3), 3 = it:criteriaDone jako rekord {status, completedDate} (Krok 5), 4 = school:items dostaje activeDuringVacation (Krok 6 poprawki), 5 = it:lessonGuides formalizacja modelu LessonGuide (Krok 7), 6 = english:profile i english:activities (Krok 11.1B), 7 = availability:configuration (Krok 11.2B)
 
 const MIGRATIONS = {
   2: (store) => {
@@ -211,6 +211,12 @@ const MIGRATIONS = {
     if (store.get('english:activities', missing) === missing) {
       store.set('english:activities', []);
     }
+  },
+  7: (store) => {
+    const missing = Object.freeze({});
+    if (store.get('availability:configuration', missing) === missing) {
+      store.set('availability:configuration', null, { strict: true });
+    }
   }
 };
 
@@ -223,7 +229,8 @@ function runMigrations(store) {
       console.log(`[migracja danych] ${v - 1} -> ${v}`);
       MIGRATIONS[v](store);
     }
-    store.set('meta:schemaVersion', v);
+    if (v === 7) store.set('meta:schemaVersion', v, { strict: true });
+    else store.set('meta:schemaVersion', v);
   }
 }
 

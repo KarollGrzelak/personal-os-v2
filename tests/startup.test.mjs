@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import {
   inspectIndexHtml,
   loadApp,
+  readAvailabilitySource,
   readAppSource,
   readBackupSource,
   readCoreSource,
@@ -17,14 +18,15 @@ import {
   toPlain
 } from './helpers/load-app.mjs';
 
-test('index.html wskazuje osiem uporządkowanych klasycznych skryptów i jeden zewnętrzny arkusz stylów', async () => {
-  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, englishSource, backupSource, appSource, stylesSource] = await Promise.all([
+test('index.html wskazuje dziewięć uporządkowanych klasycznych skryptów i jeden zewnętrzny arkusz stylów', async () => {
+  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, backupSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
     readCoreSource(),
     readTodaySource(),
     readTrainingSource(),
     readLearningSource(),
     readSchoolSource(),
+    readAvailabilitySource(),
     readEnglishSource(),
     readBackupSource(),
     readAppSource(),
@@ -32,8 +34,8 @@ test('index.html wskazuje osiem uporządkowanych klasycznych skryptów i jeden z
   ]);
   const inspection = inspectIndexHtml(html);
 
-  assert.equal(inspection.scriptCount, 8);
-  assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/english.js', './src/backup.js', './src/app.js']);
+  assert.equal(inspection.scriptCount, 9);
+  assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/backup.js', './src/app.js']);
   assert.equal(inspection.scriptDetails.every(script => script.hasSource), true);
   assert.equal(inspection.scriptDetails.every(script => script.inlineCode.trim() === ''), true);
   assert.equal(inspection.scriptDetails.every(script => script.hasForbiddenScheduling === false), true);
@@ -50,6 +52,7 @@ test('index.html wskazuje osiem uporządkowanych klasycznych skryptów i jeden z
   assert.notEqual(trainingSource.length, 0);
   assert.notEqual(learningSource.length, 0);
   assert.notEqual(schoolSource.length, 0);
+  assert.notEqual(availabilitySource.length, 0);
   assert.notEqual(englishSource.length, 0);
   assert.notEqual(backupSource.length, 0);
   assert.notEqual(appSource.length, 0);
@@ -58,9 +61,29 @@ test('index.html wskazuje osiem uporządkowanych klasycznych skryptów i jeden z
   assert.doesNotThrow(() => new vm.Script(trainingSource, { filename: 'src/training.js' }));
   assert.doesNotThrow(() => new vm.Script(learningSource, { filename: 'src/learning.js' }));
   assert.doesNotThrow(() => new vm.Script(schoolSource, { filename: 'src/school.js' }));
+  assert.doesNotThrow(() => new vm.Script(availabilitySource, { filename: 'src/availability.js' }));
   assert.doesNotThrow(() => new vm.Script(englishSource, { filename: 'src/english.js' }));
   assert.doesNotThrow(() => new vm.Script(backupSource, { filename: 'src/backup.js' }));
   assert.doesNotThrow(() => new vm.Script(appSource, { filename: 'src/app.js' }));
+});
+
+test('ładowanie Availability wyłącznie definiuje warstwę i nie rejestruje modułu', async () => {
+  const availabilitySource = await readAvailabilitySource();
+  const registrations = [];
+  const forbidden = label => new Proxy({}, {
+    get() { throw new Error(`${label} nie może być używany podczas ładowania Availability`); },
+    set() { throw new Error(`${label} nie może być używany podczas ładowania Availability`); }
+  });
+  const context = vm.createContext({
+    ModuleRegistry: { register(module) { registrations.push(module); } },
+    Store: forbidden('Store'),
+    EventBus: forbidden('EventBus'),
+    document: forbidden('DOM'),
+    console
+  });
+
+  assert.doesNotThrow(() => new vm.Script(availabilitySource, { filename: 'src/availability.js' }).runInContext(context));
+  assert.deepEqual(registrations, []);
 });
 
 test('ładowanie English wyłącznie definiuje warstwę i rejestruje moduł', async () => {
@@ -84,12 +107,13 @@ test('ładowanie English wyłącznie definiuje warstwę i rejestruje moduł', as
   assert.equal(registrations[0].name, 'Angielski');
 });
 
-test('świeża aplikacja uruchamia się bez nieobsłużonych błędów i migruje do wersji 6', async t => {
+test('świeża aplikacja uruchamia się bez nieobsłużonych błędów i migruje do wersji 7', async t => {
   const app = await loadApp();
   t.after(() => app.close());
 
-  assert.equal(app.api.DATA_VERSION, 6);
-  assert.equal(app.window.localStorage.getItem('v2:meta:schemaVersion'), '6');
+  assert.equal(app.api.DATA_VERSION, 7);
+  assert.equal(app.window.localStorage.getItem('v2:meta:schemaVersion'), '7');
+  assert.equal(app.window.localStorage.getItem('v2:availability:configuration'), 'null');
   assert.equal(app.api.Router.current(), 'dzis');
   assert.deepEqual(toPlain(app.api.ModuleRegistry.all().map(module => module.id)), ['training', 'it', 'school', 'english']);
   assert.equal(app.document.getElementById('view-dzis').classList.contains('active'), true);
@@ -100,6 +124,7 @@ test('świeża aplikacja uruchamia się bez nieobsłużonych błędów i migruje
     'https://personal-os.test/personal-os-v2/src/training.js',
     'https://personal-os.test/personal-os-v2/src/learning.js',
     'https://personal-os.test/personal-os-v2/src/school.js',
+    'https://personal-os.test/personal-os-v2/src/availability.js',
     'https://personal-os.test/personal-os-v2/src/english.js',
     'https://personal-os.test/personal-os-v2/src/backup.js',
     'https://personal-os.test/personal-os-v2/src/app.js',

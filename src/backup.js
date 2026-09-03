@@ -28,6 +28,7 @@ const KNOWN_NAMESPACES = [
   'training:profile', 'training:sessions', 'training:exerciseLogs',
   'it:stageStatuses', 'it:criteriaDone', 'it:lessonGuides', 'it:lessonGuidesRecoveredContainer',
   'school:mode', 'school:items', 'school:schedule',
+  'availability:configuration',
   'english:profile', 'english:activities', 'sandbox:tasks'
 ];
 
@@ -51,6 +52,7 @@ const NAMESPACE_DEFAULTS = {
   'school:mode': 'school_year',
   'school:items': [],
   'school:schedule': [],
+  'availability:configuration': null,
   'english:profile': null,
   'english:activities': [],
   'sandbox:tasks': null
@@ -85,6 +87,15 @@ const REQUIRED_NAMESPACES_BY_APP_DATA_VERSION = {
     'english:profile', 'english:activities', 'sandbox:tasks'
     // it:lessonGuidesRecoveredContainer CELOWO POMINIĘTY — namespace
     // odzysku awaryjnego pozostaje opcjonalny również w wersji 6.
+  ],
+  7: [
+    'dayRecords', 'habitDefs', 'habitLogs', 'ui:timeBudget',
+    'training:profile', 'training:sessions', 'training:exerciseLogs',
+    'it:stageStatuses', 'it:criteriaDone', 'it:lessonGuides',
+    'school:mode', 'school:items', 'school:schedule',
+    'availability:configuration',
+    'english:profile', 'english:activities', 'sandbox:tasks'
+    // it:lessonGuidesRecoveredContainer pozostaje opcjonalny w v7.
   ]
 };
 
@@ -311,6 +322,7 @@ const NAMESPACE_VALIDATORS = {
   'school:mode': validateSchoolModeValue,
   'school:items': validateSchoolItemsArray,
   'school:schedule': validateScheduleArray,
+  'availability:configuration': validateAvailabilityConfigurationValue,
   'english:profile': validateEnglishProfileValue,
   'english:activities': validateEnglishActivities,
   'sandbox:tasks': validateSandboxTasksArray
@@ -570,11 +582,15 @@ function previewBackupFile(rawJsonText) {
   if (!stageResult.ok) return { ok: false, errors: stageResult.errors };
 
   const staging = stageResult.staging;
+  const availabilityConfiguration = staging.get('availability:configuration', null);
   const stats = {
     trainingSessions: Object.keys(staging.get('training:sessions', {})).length,
     criteriaDone: Object.values(staging.get('it:criteriaDone', {})).filter(c => c.status === 'done').length,
     schoolItems: staging.get('school:items', []).length,
     lessonGuides: Object.keys(staging.get('it:lessonGuides', {})).length,
+    availabilityConfigured: availabilityConfiguration !== null,
+    availabilityWeeklyIntervals: availabilityConfiguration === null ? 0 : availabilityConfiguration.weeklySchedule.reduce((sum, day) => sum + day.intervals.length, 0),
+    availabilityExceptions: availabilityConfiguration === null ? 0 : availabilityConfiguration.exceptions.length,
     englishActivities: staging.get('english:activities', []).length,
     englishActivitiesDone: staging.get('english:activities', []).filter(activity => activity.status === 'done').length
   };

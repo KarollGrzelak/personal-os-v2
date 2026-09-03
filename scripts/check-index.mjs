@@ -11,7 +11,7 @@ const STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
 const STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
 const LINK_PATTERN = /<link\b([^>]*)>/gi;
 
-const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/english.js', './src/backup.js', './src/app.js'];
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/backup.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
 
 function fail(message) {
@@ -36,17 +36,19 @@ async function checkIndex() {
   const trainingPath = path.join(projectRoot, 'src', 'training.js');
   const learningPath = path.join(projectRoot, 'src', 'learning.js');
   const schoolPath = path.join(projectRoot, 'src', 'school.js');
+  const availabilityPath = path.join(projectRoot, 'src', 'availability.js');
   const englishPath = path.join(projectRoot, 'src', 'english.js');
   const backupPath = path.join(projectRoot, 'src', 'backup.js');
   const appPath = path.join(projectRoot, 'src', 'app.js');
   const stylesPath = path.join(projectRoot, 'src', 'styles.css');
-  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, englishSource, backupSource, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, backupSource, appSource, stylesSource] = await Promise.all([
     readFile(indexPath, 'utf8'),
     readFile(corePath, 'utf8'),
     readFile(todayPath, 'utf8'),
     readFile(trainingPath, 'utf8'),
     readFile(learningPath, 'utf8'),
     readFile(schoolPath, 'utf8'),
+    readFile(availabilityPath, 'utf8'),
     readFile(englishPath, 'utf8'),
     readFile(backupPath, 'utf8'),
     readFile(appPath, 'utf8'),
@@ -99,7 +101,7 @@ async function checkIndex() {
       || scripts.some(script => script.index < bodyOpenIndex || script.index > bodyCloseIndex)
       || !scriptsAreAdjacent
       || html.slice(lastScriptEndIndex, bodyCloseIndex).trim() !== '') {
-    fail('skrypty core.js, today.js, training.js, learning.js, school.js, english.js, backup.js i app.js muszą być sąsiadującymi ostatnimi elementami przed zamknięciem body');
+    fail('skrypty core.js, today.js, training.js, learning.js, school.js, availability.js, english.js, backup.js i app.js muszą być sąsiadującymi ostatnimi elementami przed zamknięciem body');
   }
 
   const styleOpenings = html.match(STYLE_OPEN_PATTERN) ?? [];
@@ -129,6 +131,7 @@ async function checkIndex() {
   if (trainingSource.length === 0) fail('src/training.js jest pusty');
   if (learningSource.length === 0) fail('src/learning.js jest pusty');
   if (schoolSource.length === 0) fail('src/school.js jest pusty');
+  if (availabilitySource.length === 0) fail('src/availability.js jest pusty');
   if (englishSource.length === 0) fail('src/english.js jest pusty');
   if (backupSource.length === 0) fail('src/backup.js jest pusty');
   if (appSource.length === 0) fail('src/app.js jest pusty');
@@ -139,6 +142,7 @@ async function checkIndex() {
     new vm.Script(trainingSource, { filename: 'src/training.js' });
     new vm.Script(learningSource, { filename: 'src/learning.js' });
     new vm.Script(schoolSource, { filename: 'src/school.js' });
+    new vm.Script(availabilitySource, { filename: 'src/availability.js' });
     new vm.Script(englishSource, { filename: 'src/english.js' });
     new vm.Script(backupSource, { filename: 'src/backup.js' });
     new vm.Script(appSource, { filename: 'src/app.js' });
@@ -146,7 +150,7 @@ async function checkIndex() {
     fail(`błąd składni JavaScript: ${error.message}`);
   }
 
-  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/today.js → src/training.js → src/learning.js → src/school.js → src/english.js → src/backup.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
+  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/today.js → src/training.js → src/learning.js → src/school.js → src/availability.js → src/english.js → src/backup.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
 }
 
 try {

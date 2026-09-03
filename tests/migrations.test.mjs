@@ -27,6 +27,40 @@ async function migrationContext(t) {
   return { app, store: app.api.createMemoryStore() };
 }
 
+function createStoreContractDouble(initialValues = {}) {
+  const persisted = new Map(Object.entries(initialValues).map(([key, value]) => [key, structuredClone(value)]));
+  const cache = new Map();
+  const attempts = [];
+  let failurePredicate = () => false;
+
+  return {
+    attempts,
+    failWhen(predicate) { failurePredicate = predicate; },
+    clearFailure() { failurePredicate = () => false; },
+    get(key, fallback) {
+      if (cache.has(key)) return cache.get(key);
+      const value = persisted.has(key) ? structuredClone(persisted.get(key)) : fallback;
+      cache.set(key, value);
+      return value;
+    },
+    set(key, value, options) {
+      const strict = options?.strict === true;
+      const attempt = { key, options: options === undefined ? undefined : structuredClone(options), value: structuredClone(value) };
+      attempts.push(attempt);
+      if (strict) {
+        if (failurePredicate(attempt)) throw new Error(`Synthetic persistent write failure: ${key}`);
+        persisted.set(key, structuredClone(value));
+        cache.set(key, value);
+        return;
+      }
+      cache.set(key, value);
+      if (!failurePredicate(attempt)) persisted.set(key, structuredClone(value));
+    },
+    cached(key, fallback) { return cache.has(key) ? cache.get(key) : fallback; },
+    persisted(key, fallback) { return persisted.has(key) ? structuredClone(persisted.get(key)) : fallback; }
+  };
+}
+
 test('migracja 1→2 zamienia done na status i zachowuje już zmigrowane zadania', async t => {
   const { app, store } = await migrationContext(t);
   store.set('meta:schemaVersion', 1);
@@ -43,7 +77,7 @@ test('migracja 1→2 zamienia done na status i zachowuje już zmigrowane zadania
     { id: 'todo', title: 'Syntetyczne B', status: 'todo', completedDate: null },
     { id: 'ready', title: 'Syntetyczne C', status: 'done', completedDate: '2026-08-19' }
   ]);
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
 });
 
 test('migracja 2→3 zamienia wartości kryteriów na rekordy stanu', async t => {
@@ -62,7 +96,7 @@ test('migracja 2→3 zamienia wartości kryteriów na rekordy stanu', async t =>
     'criterion-b': { status: 'todo', completedDate: null },
     'criterion-c': { status: 'done', completedDate: '2026-08-18' }
   });
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
 });
 
 test('migracja 3→4 dodaje activeDuringVacation bez nadpisywania istniejącej wartości', async t => {
@@ -79,7 +113,7 @@ test('migracja 3→4 dodaje activeDuringVacation bez nadpisywania istniejącej w
     { id: 'school-a', title: 'Syntetyczny termin', activeDuringVacation: false },
     { id: 'school-b', title: 'Syntetyczne zadanie', activeDuringVacation: true }
   ]);
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
 });
 
 test('migracja 4→5 zachowuje poprawny LessonGuide i odzyskuje niepoprawny wpis', async t => {
@@ -112,7 +146,7 @@ test('migracja 4→5 zachowuje poprawny LessonGuide i odzyskuje niepoprawny wpis
     status: 'draft',
     legacyContent: invalid
   });
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
 });
 
 test('migracja 4→5 odkłada uszkodzony kontener LessonGuide i przywraca pusty obiekt', async t => {
@@ -128,7 +162,7 @@ test('migracja 4→5 odkłada uszkodzony kontener LessonGuide i przywraca pusty 
     originalValue: brokenContainer
   });
   assert.deepEqual(toPlain(store.get('it:lessonGuides', null)), {});
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
 });
 
 test('migracje obsługują pusty MemoryStore', async t => {
@@ -136,21 +170,22 @@ test('migracje obsługują pusty MemoryStore', async t => {
 
   app.api.runMigrations(store);
 
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
   assert.deepEqual(toPlain(store.get('it:lessonGuides', null)), {});
   assert.equal(store.get('english:profile', 'missing'), null);
   assert.deepEqual(toPlain(store.get('english:activities', null)), []);
+  assert.equal(store.get('availability:configuration', 'missing'), null);
 });
 
 test('dane w aktualnej wersji pozostają nietknięte', async t => {
   const { app, store } = await migrationContext(t);
   const sentinel = ['synthetic-current-data'];
-  store.set('meta:schemaVersion', 6);
+  store.set('meta:schemaVersion', 7);
   store.set('it:lessonGuides', sentinel);
 
   app.api.runMigrations(store);
 
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
   assert.deepEqual(toPlain(store.get('it:lessonGuides', null)), sentinel);
   assert.equal(store.get('it:lessonGuidesRecoveredContainer', null), null);
 });
@@ -163,7 +198,7 @@ test('migracja 5→6 tworzy wyłącznie brakujące namespace’y English i chron
 
   app.api.runMigrations(store);
 
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
   assert.equal(store.get('english:profile', 'missing'), null);
   assert.deepEqual(toPlain(store.get('english:activities', null)), []);
   assert.deepEqual(toPlain(store.get('dayRecords', null)), dayRecords);
@@ -178,7 +213,7 @@ test('migracja 5→6 zachowuje null, parsowalne niepoprawne dane i częściowo i
 
   app.api.runMigrations(store);
 
-  assert.equal(store.get('meta:schemaVersion', null), 6);
+  assert.equal(store.get('meta:schemaVersion', null), 7);
   assert.equal(store.get('english:profile', 'missing'), null);
   assert.deepEqual(toPlain(store.get('english:activities', null)), invalidActivities);
 
@@ -189,6 +224,121 @@ test('migracja 5→6 zachowuje null, parsowalne niepoprawne dane i częściowo i
   app.api.runMigrations(partial);
   assert.deepEqual(toPlain(partial.get('english:profile', null)), invalidProfile);
   assert.deepEqual(toPlain(partial.get('english:activities', null)), []);
+});
+
+test('migracja 6→7 dodaje null wyłącznie przy braku Availability i nie dotyka innych domen', async t => {
+  const { app, store } = await migrationContext(t);
+  const dayRecords = { '2026-08-20': { date: '2026-08-20', energyScore: 73 } };
+  store.set('meta:schemaVersion', 6);
+  store.set('dayRecords', dayRecords);
+
+  app.api.runMigrations(store);
+
+  assert.equal(store.get('meta:schemaVersion', null), 7);
+  assert.equal(store.get('availability:configuration', 'missing'), null);
+  assert.deepEqual(toPlain(store.get('dayRecords', null)), dayRecords);
+});
+
+test('migracja 6→7 zachowuje każdą istniejącą parsowalną wartość Availability bez walidacji i naprawiania', async t => {
+  const { app } = await migrationContext(t);
+  for (const value of [
+    null,
+    { weeklySchedule: Array.from({ length: 7 }, (_, weekday) => ({ weekday, intervals: [] })), exceptions: [] },
+    { synthetic: 'parseable but invalid' },
+    { weeklySchedule: [], exceptions: 'also invalid' }
+  ]) {
+    const store = app.api.createMemoryStore();
+    store.set('meta:schemaVersion', 6);
+    store.set('availability:configuration', value);
+
+    app.api.runMigrations(store);
+
+    assert.equal(store.get('meta:schemaVersion', null), 7);
+    assert.deepEqual(toPlain(store.get('availability:configuration', 'missing')), value);
+  }
+});
+
+test('Store-double odwzorowuje połknięcie awarii bez strict i atomowość zapisu strict', () => {
+  const nonStrict = createStoreContractDouble({ probe: 'persisted-before' });
+  nonStrict.get('probe', null);
+  nonStrict.failWhen(attempt => attempt.key === 'probe');
+
+  assert.doesNotThrow(() => nonStrict.set('probe', 'cache-only'));
+  assert.equal(nonStrict.cached('probe', null), 'cache-only');
+  assert.equal(nonStrict.persisted('probe', null), 'persisted-before');
+
+  const strict = createStoreContractDouble({ probe: 'persisted-before' });
+  strict.get('probe', null);
+  strict.failWhen(attempt => attempt.key === 'probe');
+
+  assert.throws(() => strict.set('probe', 'must-not-stick', { strict: true }), /Synthetic persistent write failure/);
+  assert.equal(strict.cached('probe', null), 'persisted-before');
+  assert.equal(strict.persisted('probe', null), 'persisted-before');
+});
+
+test('awaria ścisłego zapisu availability:configuration pozostawia trwałą i cache’owaną wersję 6', async t => {
+  const { app } = await migrationContext(t);
+  const store = createStoreContractDouble({ 'meta:schemaVersion': 6 });
+  store.failWhen(attempt => attempt.key === 'availability:configuration');
+
+  assert.throws(() => app.api.runMigrations(store), /Synthetic persistent write failure: availability:configuration/);
+
+  assert.equal(store.persisted('meta:schemaVersion', null), 6);
+  assert.equal(store.cached('meta:schemaVersion', null), 6);
+  assert.equal(store.persisted('availability:configuration', 'missing'), 'missing');
+  assert.deepEqual(store.attempts.map(attempt => ({ key: attempt.key, options: attempt.options })), [
+    { key: 'availability:configuration', options: { strict: true } }
+  ]);
+});
+
+test('awaria znacznika wersji po zapisie Availability pozostawia wersję 6 w trwałym Store i cache', async t => {
+  const { app } = await migrationContext(t);
+  const store = createStoreContractDouble({ 'meta:schemaVersion': 6 });
+  store.failWhen(attempt => attempt.key === 'meta:schemaVersion');
+
+  assert.throws(() => app.api.runMigrations(store), /Synthetic persistent write failure: meta:schemaVersion/);
+
+  assert.equal(store.persisted('availability:configuration', 'missing'), null);
+  assert.equal(store.cached('availability:configuration', 'missing'), null);
+  assert.equal(store.persisted('meta:schemaVersion', null), 6);
+  assert.equal(store.cached('meta:schemaVersion', null), 6);
+  assert.deepEqual(store.attempts.map(attempt => ({ key: attempt.key, options: attempt.options })), [
+    { key: 'availability:configuration', options: { strict: true } },
+    { key: 'meta:schemaVersion', options: { strict: true } }
+  ]);
+});
+
+test('ponowienie po częściowym sukcesie zachowuje Availability i utrwala wersję 7 dopiero po sukcesie', async t => {
+  const { app } = await migrationContext(t);
+  const store = createStoreContractDouble({ 'meta:schemaVersion': 6 });
+  store.failWhen(attempt => attempt.key === 'meta:schemaVersion');
+  assert.throws(() => app.api.runMigrations(store), /Synthetic persistent write failure: meta:schemaVersion/);
+  const availabilityAfterPartialSuccess = store.persisted('availability:configuration', 'missing');
+
+  store.clearFailure();
+  store.attempts.length = 0;
+  app.api.runMigrations(store);
+
+  assert.equal(store.persisted('availability:configuration', 'missing'), availabilityAfterPartialSuccess);
+  assert.equal(store.cached('availability:configuration', 'missing'), availabilityAfterPartialSuccess);
+  assert.equal(store.persisted('meta:schemaVersion', null), 7);
+  assert.equal(store.cached('meta:schemaVersion', null), 7);
+  assert.deepEqual(store.attempts.map(attempt => ({ key: attempt.key, options: attempt.options })), [
+    { key: 'meta:schemaVersion', options: { strict: true } }
+  ]);
+});
+
+test('uszkodzony raw JSON Availability pozostaje udokumentowanym ograniczeniem Store migracji 6→7', async t => {
+  const app = await loadApp({
+    storage: {
+      'v2:meta:schemaVersion': 6,
+      'v2:availability:configuration': '{synthetic-broken-json'
+    }
+  });
+  t.after(() => app.close());
+
+  assert.equal(app.window.localStorage.getItem('v2:meta:schemaVersion'), '7');
+  assert.equal(app.window.localStorage.getItem('v2:availability:configuration'), 'null');
 });
 
 test('awaria pierwszego lub drugiego zapisu migracji 5→6 nie zapisuje wersji 6', async t => {
@@ -227,7 +377,7 @@ test('uszkodzony raw JSON pozostaje udokumentowanym ograniczeniem Store podczas 
   });
   t.after(() => app.close());
 
-  assert.equal(app.window.localStorage.getItem('v2:meta:schemaVersion'), '6');
+  assert.equal(app.window.localStorage.getItem('v2:meta:schemaVersion'), '7');
   assert.equal(app.window.localStorage.getItem('v2:english:profile'), 'null');
   assert.equal(app.api.Store.get('english:profile', 'missing'), null);
 });

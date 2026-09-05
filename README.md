@@ -6,7 +6,7 @@ The current release is an eleven-file static bundle: `index.html` loads `src/sty
 
 ## Current status
 
-- Application milestone: Step 11.2B AvailabilityEngine v1 implementation, awaiting independent audit
+- Application milestone: Step 11.3B1 explicit planning dates and Task v2 foundations, awaiting independent audit
 - Quality infrastructure: repeatable Node-based tests and GitHub Actions are available for independent audit
 - Data schema: `DATA_VERSION = 7`
 - Backup format: `personal-os-v2-backup`, version 1
@@ -21,6 +21,7 @@ The current release is an eleven-file static bundle: `index.html` loads `src/sty
 - School tasks, lesson schedule, and school-year/vacation modes
 - English profile and a manual queue with at most one current activity
 - Weekly free-time intervals and date exceptions in AvailabilityEngine v1
+- Explicit local planning dates, integer Task priorities, planning classes, and privacy-minimal task-pool change events
 - Local-first persistence through a central Store
 - Versioned data migrations from schema 1 through 7
 - Full JSON backup export

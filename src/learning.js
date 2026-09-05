@@ -6,7 +6,7 @@
    uczyć OOP przed podstawami Pythona, ani API przed backendem).
    Kryteria ukończenia PODWÓJNIE pełnią rolę: to zarówno "czy etap
    jest zaliczony" (wymóg architektury), JAK I konkretne zadania
-   IT eksponowane przez getTasks() — bez tego rozdwojenia
+   IT eksponowane przez getTasks(date) — bez tego rozdwojenia
    musielibyśmy budować osobny system zadań obok kryteriów,
    co byłoby niepotrzebnym duplikatem tej samej informacji.
    ============================================================ */
@@ -439,6 +439,7 @@ const RoadmapEngine = (() => {
     recomputeStatuses(statuses); // ta sama logika co reconcileRoadmapState — jedno źródło prawdy
     Store.set('it:stageStatuses', statuses);
     EventBus.emit('roadmap:stageComplete', { stageId });
+    emitTasksChanged('it', 'configuration');
     return { ok: true };
   }
 
@@ -496,7 +497,7 @@ const RoadmapEngine = (() => {
    Zasada z ustaleń Kroku 7: LessonGuide generowany jest NA ŻĄDANIE,
    per kryterium, nigdy hurtowo dla wszystkich 14 etapów naraz.
    LessonGuide to treść przypisana do istniejącego kryterium —
-   NIGDY zadanie. Nie pojawia się w getTasks(), nie ma wpływu na
+   NIGDY zadanie. Nie pojawia się w getTasks(date), nie ma wpływu na
    getStats(), setTaskStatus(), RoadmapEngine, PriorityEngine,
    DecisionEngine ani na ekran "Dziś".
    ============================================================ */
@@ -1200,7 +1201,7 @@ function renderGuideEditForm(criterionId, existingGuide, panelEl) {
    ============================================================
    Zgodność z kontraktem Module: id, name, getTasks, getStats,
    render — wymagane; setTaskStatus — opcjonalne, obecne.
-   Każde zadanie zwrócone przez getTasks() ma WSZYSTKIE pola
+   Każde zadanie zwrócone przez getTasks(date) ma WSZYSTKIE pola
    wymagane w tym kroku: moduleId, goalId, stageId, title, why,
    estimatedMinutes, difficulty, xp, priority, status.
 
@@ -1212,7 +1213,8 @@ const LearningModule = {
   id: 'it',
   name: 'Nauka IT',
 
-  getTasks() {
+  getTasks(date) {
+    assertPlanningDate(date);
     const activeStage = RoadmapEngine.getActiveStage();
     if (!activeStage) return []; // cała roadmapa ukończona — brak aktywnego etapu
     const state = RoadmapEngine.getCriteriaState();
@@ -1229,7 +1231,8 @@ const LearningModule = {
         estimatedMinutes: c.estimatedMinutes,
         difficulty: c.difficulty,
         xp: c.xp,
-        priority: 4, // pozycja "Nauka IT" w ustalonej hierarchii priorytetów
+        priority: 40, // całkowita pozycja "Nauka IT" w hierarchii Task v2
+        planningClass: 'flexible',
         status: (rec && rec.status === 'done') ? 'done' : 'todo',
         completedDate: rec ? rec.completedDate : null
       };
@@ -1241,7 +1244,12 @@ const LearningModule = {
   // zaliczyć etapu pomijając jego wymagania). Świadomy kompromis,
   // opisany w podsumowaniu Kroku 5.
   setTaskStatus(taskId, status) {
-    RoadmapEngine.setCriterionStatus(taskId, status === 'done' ? 'done' : 'todo');
+    if (!['todo', 'done', 'skipped'].includes(status)) return;
+    const normalizedStatus = status === 'done' ? 'done' : 'todo';
+    const current = RoadmapEngine.getCriteriaState()[taskId];
+    const currentStatus = current?.status === 'done' ? 'done' : 'todo';
+    if (currentStatus === normalizedStatus) return;
+    RoadmapEngine.setCriterionStatus(taskId, normalizedStatus);
     EventBus.emit('task:status', { moduleId: this.id, taskId, status });
   },
 
@@ -1399,5 +1407,3 @@ if (!roadmapValidation.valid) {
   RoadmapEngine.reconcileRoadmapState();
   ModuleRegistry.register(LearningModule);
 }
-
-

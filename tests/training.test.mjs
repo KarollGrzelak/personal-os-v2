@@ -101,7 +101,7 @@ test('sesja przechodzi przez planned, in_progress, partial, completed i skipped 
   const date = '2026-08-17';
   const taskId = `day-a:${date}`;
   const observed = [];
-  const currentTask = () => toPlain(module.getTasks()[0]);
+  const currentTask = () => toPlain(module.getTasks(date)[0]);
 
   observed.push(currentTask().sessionStatus);
   assert.equal(currentTask().status, 'todo');
@@ -137,4 +137,66 @@ test('sesja przechodzi przez planned, in_progress, partial, completed i skipped 
   module.setTaskStatus(taskId, 'todo');
   assert.equal(currentTask().sessionStatus, 'planned');
   assert.deepEqual(observed, ['planned', 'in_progress', 'partial', 'completed', 'skipped']);
+});
+
+test('Training wyznacza sesję i ID wyłącznie z jawnej daty dla weekday 0–6', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const dates = ['2026-08-16', '2026-08-17', '2026-08-18', '2026-08-19', '2026-08-20', '2026-08-21', '2026-08-22'];
+  const expectedDayIds = [null, 'day-a', 'day-mobility', 'day-b', null, 'day-c', null];
+
+  dates.forEach((date, weekday) => {
+    assert.equal(app.api.weekdayFromLocalDate(date), weekday);
+    const tasks = toPlain(module.getTasks(date));
+    if (expectedDayIds[weekday] === null) {
+      assert.deepEqual(tasks, []);
+      return;
+    }
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0].id, `${expectedDayIds[weekday]}:${date}`);
+    assert.equal(tasks[0].priority, 30);
+    assert.equal(tasks[0].planningClass, 'scheduled');
+    assert.deepEqual(toPlain(app.api.validateTaskV2(module.getTasks(date)[0])), { valid: true, errors: [] });
+  });
+  assert.equal(module.getTasks('2026-08-19')[0].id.endsWith('2026-08-19'), true, 'wynik nie używa zamrożonego poniedziałku');
+});
+
+test('Training emituje minimalne tasks:changed tylko gdy mutacja zmienia projekcję Task', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const taskEvents = [];
+  const statusEvents = [];
+  app.api.EventBus.on('tasks:changed', payload => taskEvents.push(toPlain(payload)));
+  app.api.EventBus.on('task:status', payload => statusEvents.push(toPlain(payload)));
+
+  assert.equal(module.saveProfile([]).ok, false);
+  assert.equal(module.saveProfile(trainingProfile()).ok, true);
+  assert.equal(module.saveProfile(trainingProfile()).ok, true);
+  assert.deepEqual(taskEvents, [{ moduleId: 'training', change: 'configuration' }]);
+
+  taskEvents.length = 0;
+  const log = { sets: 3, reps: 10, weight: 10, rpe: 7 };
+  assert.equal(module.upsertExerciseLog('squat-goblet', '2026-08-17', log).ok, true);
+  assert.equal(module.upsertExerciseLog('squat-goblet', '2026-08-17', { ...log, weight: 11 }).ok, true);
+  module.deleteExerciseLog('squat-goblet', '2026-08-17');
+  module.deleteExerciseLog('squat-goblet', '2026-08-17');
+  assert.deepEqual(taskEvents, [
+    { moduleId: 'training', change: 'updated' },
+    { moduleId: 'training', change: 'updated' }
+  ]);
+
+  taskEvents.length = 0;
+  module.setTaskStatus('day-a:2026-08-17', 'skipped');
+  module.setTaskStatus('day-a:2026-08-17', 'skipped');
+  module.setTaskStatus('day-a:2026-08-17', 'todo');
+  module.setTaskStatus('day-a:2026-08-17', 'todo');
+  app.dialogs.enqueueConfirm(false);
+  module.setTaskStatus('day-a:2026-08-17', 'done');
+  assert.deepEqual(taskEvents, [], 'jawna zmiana statusu nie dubluje wspólnego zdarzenia');
+  assert.deepEqual(statusEvents, [
+    { moduleId: 'training', taskId: 'day-a:2026-08-17', status: 'skipped' },
+    { moduleId: 'training', taskId: 'day-a:2026-08-17', status: 'todo' }
+  ]);
 });

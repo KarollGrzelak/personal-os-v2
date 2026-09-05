@@ -13,7 +13,7 @@ const ENGLISH_ACTIVITY_TYPES = [
   'technical-reading', 'general-reading', 'vocabulary',
   'listening', 'writing', 'speaking'
 ];
-const ENGLISH_TASK_PRIORITY = 3.9;
+const ENGLISH_TASK_PRIORITY = 39;
 const ENGLISH_TASK_XP = 15;
 const ENGLISH_PROFILE_FIELDS = ['enabled', 'selfAssessedLevel', 'weeklyMinutes', 'focus'];
 const ENGLISH_ACTIVITY_FIELDS = [
@@ -213,6 +213,7 @@ function englishTaskFromActivity(activity) {
     difficulty: activity.difficulty,
     xp: ENGLISH_TASK_XP,
     priority: ENGLISH_TASK_PRIORITY,
+    planningClass: 'flexible',
     status: activity.status,
     completedDate: activity.completedDate,
     extra: { englishActivityType: activity.type }
@@ -245,8 +246,10 @@ const EnglishModule = {
     if (validateEnglishProfile(existing).valid && englishValuesEqual(existing, profile)) {
       return { ok: true, changed: false, profile: existing };
     }
+    const previousEnabled = validateEnglishProfile(existing).valid && existing.enabled;
     Store.set('english:profile', profile);
     emitEnglishProfileChanged('saved', profile);
+    if (previousEnabled !== profile.enabled) emitTasksChanged(this.id, 'configuration');
     refreshEnglishViews(this);
     return { ok: true, changed: true, profile };
   },
@@ -260,6 +263,7 @@ const EnglishModule = {
     const next = { ...profile, enabled };
     Store.set('english:profile', next);
     emitEnglishProfileChanged('enabled', next);
+    emitTasksChanged(this.id, 'configuration');
     refreshEnglishViews(this);
     return { ok: true, changed: true, profile: next };
   },
@@ -282,6 +286,7 @@ const EnglishModule = {
     const next = [...state.activities, activity];
     Store.set('english:activities', next);
     emitEnglishActivityChanged(id, 'created');
+    emitTasksChanged(this.id, 'created');
     refreshEnglishViews(this);
     return { ok: true, changed: true, activity };
   },
@@ -301,6 +306,7 @@ const EnglishModule = {
     const next = state.activities.map((activity, i) => i === index ? candidate : activity);
     Store.set('english:activities', next);
     emitEnglishActivityChanged(activityId, 'edited');
+    emitTasksChanged(this.id, 'updated');
     refreshEnglishViews(this);
     return { ok: true, changed: true, activity: candidate };
   },
@@ -318,6 +324,7 @@ const EnglishModule = {
     }));
     Store.set('english:activities', next);
     emitEnglishActivityChanged(activityId, 'current');
+    emitTasksChanged(this.id, 'selection');
     refreshEnglishViews(this);
     return { ok: true, changed: true, activity: next.find(activity => activity.id === activityId) };
   },
@@ -371,19 +378,20 @@ const EnglishModule = {
     const next = state.activities.filter(activity => activity.id !== activityId);
     Store.set('english:activities', next);
     emitEnglishActivityChanged(activityId, 'deleted');
+    emitTasksChanged(this.id, 'deleted');
     refreshEnglishViews(this);
     return { ok: true, changed: true };
   },
 
-  getTasks() {
+  getTasks(date) {
+    assertPlanningDate(date);
     const activities = this.getActivities();
     if (!validateEnglishActivities(activities).valid) return [];
     const profile = this.getProfile();
     const profileEnabled = validateEnglishProfile(profile).valid && profile.enabled;
-    const today = localDateKey();
     return activities
       .filter(activity => (profileEnabled && activity.status === 'todo' && activity.current)
-        || (activity.status === 'done' && activity.completedDate === today))
+        || (activity.status === 'done' && activity.completedDate === date))
       .map(englishTaskFromActivity);
   },
 

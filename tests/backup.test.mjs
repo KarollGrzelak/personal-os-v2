@@ -114,6 +114,48 @@ test('preview aktualnego backupu zwraca statystyki i staging bez dotykania prawd
   assert.deepEqual(storeEvents, []);
 });
 
+test('backup v7 zachowuje wcześniejszy kontrakt długich danych School bez przycinania', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const longId = 'synthetic-school-' + 'i'.repeat(210);
+  const longSubject = 'S'.repeat(180);
+  const longTitle = 'T'.repeat(180);
+  const schoolRecord = {
+    id: longId,
+    type: 'homework',
+    subject: longSubject,
+    title: longTitle,
+    dueDate: '2026-08-21',
+    estimatedMinutes: 30,
+    difficulty: 2,
+    notes: 'Synthetic compatibility record',
+    status: 'todo',
+    completedDate: null,
+    activeDuringVacation: false
+  };
+  const envelope = backupEnvelope(app.api);
+  envelope.data['school:items'] = [schoolRecord];
+  let importCompletedEvents = 0;
+  app.api.EventBus.on('backup:importCompleted', () => importCompletedEvents++);
+
+  const staged = app.api.stageAndValidateBackup(envelope);
+
+  assert.equal(staged.ok, true);
+  assert.deepEqual(toPlain(staged.staging.get('school:items', null)), [schoolRecord]);
+  app.api.Store.set('school:items', [schoolRecord]);
+  const exported = toPlain(app.api.exportBackup());
+  assert.deepEqual(exported.data['school:items'], [schoolRecord]);
+
+  const preview = app.api.previewBackupFile(JSON.stringify(exported));
+
+  assert.equal(preview.ok, true);
+  assert.deepEqual(toPlain(preview.staging.get('school:items', null)), [schoolRecord]);
+  assert.equal(preview.staging.get('school:items', [])[0].id.length > 200, true);
+  assert.equal(preview.staging.get('school:items', [])[0].subject, longSubject);
+  assert.equal(preview.staging.get('school:items', [])[0].title, longTitle);
+  assert.equal(importCompletedEvents, 0, 'staging, eksport i preview nie wykonują Replace');
+});
+
 test('starszy backup dostaje legalne defaults i przechodzi rzeczywiste migracje 1→7', async t => {
   const app = await loadApp({ fixedNow: FIXED_THURSDAY });
   t.after(() => app.close());

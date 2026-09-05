@@ -191,12 +191,6 @@ function validateAvailabilityConfigurationValue(value) {
   return { valid: errors.length === 0, errors };
 }
 
-function weekdayFromLocalDate(date) {
-  if (typeof date !== 'string' || !isValidCalendarDateString(date)) return null;
-  const [year, month, day] = date.split('-').map(Number);
-  return new Date(year, month - 1, day).getDay();
-}
-
 function sumAvailabilityMinutes(intervals) {
   return intervals.reduce((sum, interval) => (
     sum + availabilityTimeToMinutes(interval.end) - availabilityTimeToMinutes(interval.start)

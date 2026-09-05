@@ -231,6 +231,7 @@ function renderDzis() {
 }
 
 function renderTodayTasks() {
+  const today = localDateKey();
   // Odczyt generyczny, opcjonalny — przez ModuleRegistry.all(), nigdy
   // przez odwołanie do konkretnego modułu po ID (pkt E/17-19). Każdy
   // moduł, który implementuje getDayContext(), może wyświetlić notatkę
@@ -249,8 +250,7 @@ function renderTodayTasks() {
   const el = document.getElementById('today-tasks');
   const budgetKey = Store.get('ui:timeBudget', 'normal');
   const budget = TIME_BUDGETS.find(b => b.key === budgetKey) || TIME_BUDGETS[1];
-  const plan = DecisionEngine.planToday(budget.minutes);
-  const today = localDateKey();
+  const plan = DecisionEngine.planToday(budget.minutes, today);
 
   const rows = plan.picks.map(t => `
     <div class="item">
@@ -272,7 +272,7 @@ function renderTodayTasks() {
   // Zadania ukończone DZISIAJ, z dowolnego modułu — z opcją cofnięcia
   // błędnego kliknięcia (setTaskStatus z powrotem na 'todo').
   const doneToday = ModuleRegistry.all().flatMap(mod =>
-    mod.getTasks()
+    mod.getTasks(today)
       .filter(t => t.status === 'done' && t.completedDate === today)
       .map(t => ({ ...t, moduleId: mod.id, moduleName: mod.name }))
   );
@@ -351,9 +351,10 @@ const PriorityEngine = (() => {
   // Zadania w statusie 'todo' ze WSZYSTKICH zarejestrowanych
   // modułów — przez ModuleRegistry, nigdy przez odwołanie do
   // konkretnego modułu po nazwie.
-  function collectOpenTasks() {
+  function collectOpenTasks(date) {
+    assertPlanningDate(date);
     return ModuleRegistry.all().flatMap(mod =>
-      mod.getTasks()
+      mod.getTasks(date)
         .filter(t => t.status === 'todo')
         .map(t => ({ ...t, moduleId: mod.id, moduleName: mod.name }))
     );
@@ -398,8 +399,8 @@ const DecisionEngine = (() => {
   const LOW_ENERGY_THRESHOLD = 50;
   const HIGH_DIFFICULTY_THRESHOLD = 4;
 
-  function planToday(timeBudgetMinutes) {
-    const date = DayEngine.todayKey();
+  function planToday(timeBudgetMinutes, date) {
+    assertPlanningDate(date);
     const record = DayEngine.getRecord(date);
     const energy = record ? record.energyScore : null;
 
@@ -407,7 +408,7 @@ const DecisionEngine = (() => {
       .filter(h => h.active)
       .map(h => ({ ...h, done: HabitEngine.isDone(h.id, date) }));
 
-    const allOpen = PriorityEngine.collectOpenTasks();
+    const allOpen = PriorityEngine.collectOpenTasks(date);
 
     // KROK 1: filtr energii — działa na CAŁEJ puli, przed budżetem czasu.
     let pool = allOpen;
@@ -441,4 +442,3 @@ const DecisionEngine = (() => {
 
   return { planToday, setTaskStatus };
 })();
-

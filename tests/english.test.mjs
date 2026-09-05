@@ -337,9 +337,11 @@ test('błędy, no-opy i anulowanie nie zapisują, nie emitują i nie renderują 
   const storeEvents = [];
   const activityEvents = [];
   const taskEvents = [];
+  const poolEvents = [];
   app.api.EventBus.on('store:change', event => storeEvents.push(toPlain(event)));
   app.api.EventBus.on('english:activityChanged', event => activityEvents.push(toPlain(event)));
   app.api.EventBus.on('task:status', event => taskEvents.push(toPlain(event)));
+  app.api.EventBus.on('tasks:changed', event => poolEvents.push(toPlain(event)));
   const englishMarker = app.document.createElement('span');
   const todayMarker = app.document.createElement('span');
   app.document.getElementById('view-english').appendChild(englishMarker);
@@ -353,6 +355,7 @@ test('błędy, no-opy i anulowanie nie zapisują, nie emitują i nie renderują 
   assert.deepEqual(storeEvents, []);
   assert.deepEqual(activityEvents, []);
   assert.deepEqual(taskEvents, []);
+  assert.deepEqual(poolEvents, []);
   assert.equal(englishMarker.isConnected, true);
   assert.equal(todayMarker.isConnected, true);
   assert.equal(app.dialogs.confirms.length, 1);
@@ -425,8 +428,9 @@ test('getTasks wystawia jedno current i done-today także przy wyłączonym lub 
   ];
   setEnglishState(app, englishProfile(), activities);
 
-  assert.deepEqual(toPlain(module.getTasks().map(task => task.id)), ['current', 'done-today']);
-  const task = toPlain(module.getTasks()[0]);
+  assert.deepEqual(toPlain(module.getTasks('2026-08-20').map(task => task.id)), ['current', 'done-today']);
+  assert.deepEqual(toPlain(module.getTasks('2026-08-19').map(task => task.id)), ['current', 'done-old']);
+  const task = toPlain(module.getTasks('2026-08-20')[0]);
   assert.deepEqual(task, {
     id: 'current',
     moduleId: 'english',
@@ -436,35 +440,37 @@ test('getTasks wystawia jedno current i done-today także przy wyłączonym lub 
     estimatedMinutes: 20,
     difficulty: 2,
     xp: 15,
-    priority: 3.9,
+    priority: 39,
+    planningClass: 'flexible',
     status: 'todo',
     completedDate: null,
     extra: { englishActivityType: 'technical-reading' }
   });
+  assert.deepEqual(toPlain(app.api.validateTaskV2(module.getTasks('2026-08-20')[0])), { valid: true, errors: [] });
   assert.deepEqual(toPlain(module.getStats()), { done: 2, total: 5, label: 'Angielski' });
 
   for (const profile of [englishProfile({ enabled: false }), null, { synthetic: 'invalid' }]) {
     app.api.Store.set('english:profile', inWindow(app, profile));
-    assert.deepEqual(toPlain(module.getTasks().map(item => item.id)), ['done-today']);
+    assert.deepEqual(toPlain(module.getTasks('2026-08-20').map(item => item.id)), ['done-today']);
   }
   app.api.Store.set('english:activities', inWindow(app, { synthetic: 'invalid' }));
-  assert.deepEqual(toPlain(module.getTasks()), []);
+  assert.deepEqual(toPlain(module.getTasks('2026-08-20')), []);
   assert.deepEqual(toPlain(module.getStats()), { done: 0, total: 0, label: 'Angielski' });
 });
 
-test('priorytet 3.9 współdziała deterministycznie z budżetami i filtrem niskiej energii', async t => {
+test('całkowity priorytet English 39 współdziała deterministycznie z budżetami i filtrem niskiej energii', async t => {
   const app = await loadApp({ fixedNow: '2026-08-20T08:00:00.000Z' });
   t.after(() => app.close());
-  const english = { id: 'english', priority: 3.9, estimatedMinutes: 20 };
+  const english = { id: 'english', priority: 39, estimatedMinutes: 20 };
   const itTasks = [
-    { id: 'it-40', priority: 4, estimatedMinutes: 40 },
-    { id: 'it-30-a', priority: 4, estimatedMinutes: 30 },
-    { id: 'it-30-b', priority: 4, estimatedMinutes: 30 },
-    { id: 'it-45', priority: 4, estimatedMinutes: 45 }
+    { id: 'it-40', priority: 40, estimatedMinutes: 40 },
+    { id: 'it-30-a', priority: 40, estimatedMinutes: 30 },
+    { id: 'it-30-b', priority: 40, estimatedMinutes: 30 },
+    { id: 'it-45', priority: 40, estimatedMinutes: 45 }
   ];
-  const training = { id: 'training', priority: 3, estimatedMinutes: 45 };
-  const urgentSchool = { id: 'school-urgent', priority: 2.5, estimatedMinutes: 30 };
-  const calmHomework = { id: 'school-calm-homework', priority: 4.2, estimatedMinutes: 30 };
+  const training = { id: 'training', priority: 30, estimatedMinutes: 45 };
+  const urgentSchool = { id: 'school-urgent', priority: 25, estimatedMinutes: 30 };
+  const calmHomework = { id: 'school-calm-homework', priority: 42, estimatedMinutes: 30 };
   const scenarios = [
     {
       name: 'IT + English',
@@ -525,14 +531,14 @@ test('priorytet 3.9 współdziała deterministycznie z budżetami i filtrem nisk
   app.api.ModuleRegistry.register({
     id: 'synthetic-energy-matrix',
     name: 'Synthetic energy matrix',
-    getTasks: () => energyTasks,
+    getTasks: date => energyTasks,
     getStats: () => ({ done: 0, total: energyTasks.length, label: 'Synthetic energy matrix' }),
     render: () => {}
   });
   app.api.Store.set('dayRecords', inWindow(app, {
     '2026-08-20': { date: '2026-08-20', energyScore: 40 }
   }));
-  const plan = app.api.DecisionEngine.planToday(1000);
+  const plan = app.api.DecisionEngine.planToday(1000, '2026-08-20');
   assert.deepEqual(toPlain(plan.picks.filter(task => task.id.startsWith('energy-')).map(task => task.id)), [
     'energy-1', 'energy-2', 'energy-3'
   ]);
@@ -540,6 +546,57 @@ test('priorytet 3.9 współdziała deterministycznie z budżetami i filtrem nisk
     'energy-4', 'energy-5'
   ]);
   assert.equal(plan.reasonCounts.energy >= 2, true);
+});
+
+test('English emituje pełne mapowanie minimalnego tasks:changed bez duplikatu dla statusu', async t => {
+  const app = await loadApp({ fixedNow: '2026-08-20T08:00:00.000Z' });
+  t.after(() => app.close());
+  const module = app.api.EnglishModule;
+  const poolEvents = [];
+  const statusEvents = [];
+  app.api.EventBus.on('tasks:changed', payload => poolEvents.push(toPlain(payload)));
+  app.api.EventBus.on('task:status', payload => statusEvents.push(toPlain(payload)));
+
+  assert.equal(module.saveProfile(inWindow(app, { ...englishProfile(), weeklyMinutes: 14 })).ok, false);
+  assert.equal(module.saveProfile(inWindow(app, englishProfile())).changed, true);
+  assert.equal(module.saveProfile(inWindow(app, englishProfile())).changed, false);
+  assert.equal(module.saveProfile(inWindow(app, englishProfile({ weeklyMinutes: 121 }))).changed, true);
+  assert.equal(module.setEnabled(false).changed, true);
+  assert.equal(module.setEnabled(false).changed, false);
+  assert.equal(module.setEnabled(true).changed, true);
+
+  const created = module.createActivity(inWindow(app, englishActivity({ id: 'ignored' })));
+  assert.equal(created.changed, true);
+  const content = {
+    type: created.activity.type,
+    title: created.activity.title,
+    objective: created.activity.objective,
+    resourceUrl: created.activity.resourceUrl,
+    estimatedMinutes: created.activity.estimatedMinutes,
+    difficulty: created.activity.difficulty
+  };
+  assert.equal(module.editActivity(created.activity.id, inWindow(app, content)).changed, false);
+  assert.equal(module.editActivity(created.activity.id, inWindow(app, { ...content, title: 'Changed synthetic title' })).changed, true);
+  assert.equal(module.setCurrentActivity(created.activity.id).changed, true);
+  assert.equal(module.setCurrentActivity(created.activity.id).changed, false);
+  assert.equal(module.setTaskStatus(created.activity.id, 'done').changed, true);
+  assert.equal(module.setTaskStatus(created.activity.id, 'done').changed, false);
+  app.dialogs.enqueueConfirm(false);
+  assert.equal(module.deleteActivity(created.activity.id).cancelled, true);
+  app.dialogs.enqueueConfirm(true);
+  assert.equal(module.deleteActivity(created.activity.id).changed, true);
+
+  assert.deepEqual(poolEvents, [
+    { moduleId: 'english', change: 'configuration' },
+    { moduleId: 'english', change: 'configuration' },
+    { moduleId: 'english', change: 'configuration' },
+    { moduleId: 'english', change: 'created' },
+    { moduleId: 'english', change: 'updated' },
+    { moduleId: 'english', change: 'selection' },
+    { moduleId: 'english', change: 'deleted' }
+  ]);
+  assert.equal(poolEvents.every(payload => Object.keys(payload).sort().join(',') === 'change,moduleId'), true);
+  assert.deepEqual(statusEvents, [{ moduleId: 'english', taskId: created.activity.id, status: 'done' }]);
 });
 
 test('UI escapuje treść, ponownie waliduje link, nie uruchamia sieci i usuwa dopiero po potwierdzeniu', async t => {

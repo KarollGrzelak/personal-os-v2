@@ -52,12 +52,12 @@ test('kryteria wymagają ręcznego zamknięcia etapu, które odblokowuje następ
   const initialStatuses = toPlain(app.api.RoadmapEngine.getStageStatuses());
   assert.equal(initialStatuses[first.id], 'active');
   assert.equal(initialStatuses[second.id], 'locked');
-  assert.equal(module.getTasks().length, first.criteria.length);
-  assert.equal(module.getTasks().every(task => task.status === 'todo'), true);
+  assert.equal(module.getTasks('2026-08-17').length, first.criteria.length);
+  assert.equal(module.getTasks('2026-08-17').every(task => task.status === 'todo'), true);
 
   for (const criterion of first.criteria) module.setTaskStatus(criterion.id, 'done');
 
-  const completedTasks = toPlain(module.getTasks());
+  const completedTasks = toPlain(module.getTasks('2026-08-17'));
   assert.equal(completedTasks.every(task => task.status === 'done'), true);
   assert.equal(completedTasks.every(task => task.completedDate === '2026-08-17'), true);
   assert.equal(app.api.RoadmapEngine.getProgress(first.id), 100);
@@ -71,6 +71,48 @@ test('kryteria wymagają ręcznego zamknięcia etapu, które odblokowuje następ
   assert.equal(finalStatuses[second.id], 'active');
   assert.equal(app.api.RoadmapEngine.getActiveStage().id, second.id);
   assert.deepEqual(toPlain(module.getStats()), { done: 1, total: stages.length, label: 'Nauka IT' });
+});
+
+test('Learning waliduje datę, ale zwraca identyczną pulę Task v2 dla dwóch poprawnych dni', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = learning(app.api);
+  const monday = toPlain(module.getTasks('2026-08-17'));
+  const thursday = toPlain(module.getTasks('2026-08-20'));
+
+  assert.deepEqual(thursday, monday);
+  assert.equal(monday.length > 0, true);
+  for (const task of module.getTasks('2026-08-17')) {
+    assert.equal(task.priority, 40);
+    assert.equal(task.planningClass, 'flexible');
+    assert.deepEqual(toPlain(app.api.validateTaskV2(task)), { valid: true, errors: [] });
+  }
+});
+
+test('Learning emituje configuration po completeStage, a status i LessonGuide nie dublują tasks:changed', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = learning(app.api);
+  const first = app.api.ROADMAP_STAGES[0];
+  const taskEvents = [];
+  const statusEvents = [];
+  app.api.EventBus.on('tasks:changed', payload => taskEvents.push(toPlain(payload)));
+  app.api.EventBus.on('task:status', payload => statusEvents.push(toPlain(payload)));
+
+  assert.equal(app.api.RoadmapEngine.completeStage(first.id).ok, false);
+  assert.equal(module.saveLessonGuide(first.criteria[0].id, lessonGuideContent()).ok, true);
+  assert.deepEqual(taskEvents, []);
+
+  module.setTaskStatus(first.criteria[0].id, 'done');
+  module.setTaskStatus(first.criteria[0].id, 'done');
+  for (const criterion of first.criteria.slice(1)) module.setTaskStatus(criterion.id, 'done');
+  assert.deepEqual(taskEvents, []);
+  assert.equal(statusEvents.length, first.criteria.length, 'powtórny status jest rzeczywistym no-opem');
+
+  assert.deepEqual(toPlain(app.api.RoadmapEngine.completeStage(first.id)), { ok: true });
+  assert.equal(app.api.RoadmapEngine.completeStage(first.id).ok, false);
+  assert.deepEqual(taskEvents, [{ moduleId: 'it', change: 'configuration' }]);
+  assert.deepEqual(Object.keys(taskEvents[0]).sort(), ['change', 'moduleId']);
 });
 
 test('reconciliation usuwa nieistniejące etapy, dodaje brakujące i przelicza aktywny etap', async t => {

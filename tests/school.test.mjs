@@ -33,6 +33,40 @@ test('walidacja szkolna rozpoznaje prawdziwe daty kalendarzowe, godziny i błęd
   assert.deepEqual(toPlain(module.getItems()), []);
 });
 
+test('School ogranicza wyłącznie pochodny Task title bez zmiany trwałych danych', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const module = school(app.api);
+  const longSubject = 'S'.repeat(180);
+  const longTitle = 'T'.repeat(180);
+  const longItemId = addItem(module, { subject: longSubject, title: longTitle });
+  const shortItemId = addItem(module, { subject: 'Short subject', title: 'Short title' });
+  const storedBefore = toPlain(module.getItems());
+  const storeEvents = [];
+  const taskEvents = [];
+  app.api.EventBus.on('store:change', payload => storeEvents.push(toPlain(payload)));
+  app.api.EventBus.on('tasks:changed', payload => taskEvents.push(toPlain(payload)));
+
+  const tasks = module.getTasks('2026-08-20');
+  const longTask = tasks.find(task => task.id === longItemId);
+  const shortTask = tasks.find(task => task.id === shortItemId);
+
+  assert.equal(`Zadanie domowe: ${longSubject} — ${longTitle}`.length > 300, true);
+  assert.equal(longTask.title.length <= 300, true);
+  assert.equal(longTask.title.endsWith('…'), true);
+  assert.deepEqual(toPlain(app.api.validateTaskV2(longTask)), { valid: true, errors: [] });
+  assert.equal(shortTask.title, 'Zadanie domowe: Short subject — Short title');
+  assert.deepEqual(toPlain(module.getItems()), storedBefore);
+  assert.equal(storedBefore.find(item => item.id === longItemId).subject, longSubject);
+  assert.equal(storedBefore.find(item => item.id === longItemId).title, longTitle);
+  const schoolView = app.document.getElementById('view-school');
+  module.render(schoolView);
+  assert.equal(schoolView.textContent.includes(longSubject), true);
+  assert.equal(schoolView.textContent.includes(longTitle), true);
+  assert.deepEqual(storeEvents, []);
+  assert.deepEqual(taskEvents, []);
+});
+
 test('plan lekcji odrzuca błędne godziny i nakładanie, ale dopuszcza stykające się lekcje', async t => {
   const app = await loadApp({ fixedNow: FIXED_MONDAY });
   t.after(() => app.close());
@@ -48,24 +82,86 @@ test('plan lekcji odrzuca błędne godziny i nakładanie, ale dopuszcza stykają
   assert.equal(module.getSchedule().length, 2);
 });
 
-test('priorytety szkolne eskalują dla terminów dziś, jutro i w najbliższych dniach', async t => {
+test('priorytety i planningClass School wynikają z jawnej daty dla zaległości oraz 0–4 dni', async t => {
   const app = await loadApp({ fixedNow: FIXED_THURSDAY });
   t.after(() => app.close());
   const module = school(app.api);
+  addItem(module, { subject: 'Overdue', dueDate: '2026-08-19' });
   addItem(module, { subject: 'Today', dueDate: '2026-08-20' });
   addItem(module, { subject: 'Tomorrow', dueDate: '2026-08-21' });
-  addItem(module, { subject: 'Soon', dueDate: '2026-08-22' });
-  addItem(module, { subject: 'Far', dueDate: '2026-08-30' });
+  addItem(module, { subject: 'Two days', dueDate: '2026-08-22' });
+  addItem(module, { subject: 'Three days', dueDate: '2026-08-23' });
+  addItem(module, { subject: 'Four days', dueDate: '2026-08-24' });
   addItem(module, { type: 'material', subject: 'No due date', dueDate: null });
 
-  const tasks = toPlain(module.getTasks());
+  const tasks = toPlain(module.getTasks('2026-08-20'));
   const priority = subject => tasks.find(task => task.title.includes(`${subject} —`)).priority;
 
-  assert.equal(priority('Today'), 2.5);
-  assert.equal(priority('Tomorrow'), 2.8);
-  assert.equal(priority('Soon'), 3.5);
-  assert.equal(priority('Far'), 4.2);
-  assert.equal(priority('No due date'), 4.8);
+  assert.equal(priority('Overdue'), 25);
+  assert.equal(priority('Today'), 25);
+  assert.equal(priority('Tomorrow'), 28);
+  assert.equal(priority('Two days'), 35);
+  assert.equal(priority('Three days'), 35);
+  assert.equal(priority('Four days'), 42);
+  assert.equal(priority('No due date'), 48);
+  const planningClass = subject => tasks.find(task => task.title.includes(`${subject} —`)).planningClass;
+  for (const subject of ['Overdue', 'Today', 'Tomorrow']) assert.equal(planningClass(subject), 'urgent');
+  for (const subject of ['Two days', 'Three days', 'Four days', 'No due date']) assert.equal(planningClass(subject), 'flexible');
+  const fromPreviousDay = toPlain(module.getTasks('2026-08-19'));
+  assert.equal(fromPreviousDay.find(task => task.title.includes('Today —')).priority, 28, 'priorytet używa argumentu, nie zamrożonego zegara');
+  for (const task of module.getTasks('2026-08-20')) {
+    assert.deepEqual(toPlain(app.api.validateTaskV2(task)), { valid: true, errors: [] });
+  }
+});
+
+test('bazowe priorytety typów School i granica roku zachowują całkowitą kolejność', async t => {
+  const app = await loadApp();
+  t.after(() => app.close());
+  const module = school(app.api);
+  const priorities = { exam: 32, test: 34, quiz: 36, project: 38, homework: 42, review: 44, material: 48 };
+  for (const [type] of Object.entries(priorities)) addItem(module, { type, subject: type, dueDate: null });
+  addItem(module, { type: 'material', subject: 'New year tomorrow', dueDate: '2027-01-01' });
+  addItem(module, { type: 'material', subject: 'Old year overdue', dueDate: '2026-12-30' });
+
+  const tasks = toPlain(module.getTasks('2026-12-31'));
+  for (const [type, expected] of Object.entries(priorities)) {
+    assert.equal(tasks.find(task => task.title.includes(`: ${type} —`)).priority, expected);
+  }
+  assert.equal(tasks.find(task => task.title.includes('New year tomorrow')).priority, 28);
+  assert.equal(tasks.find(task => task.title.includes('New year tomorrow')).planningClass, 'urgent');
+  assert.equal(tasks.find(task => task.title.includes('Old year overdue')).priority, 25);
+});
+
+test('School emituje dokładne tasks:changed dla trybu, utworzenia i usunięcia, ale nie statusu ani lekcji', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const module = school(app.api);
+  const taskEvents = [];
+  const statusEvents = [];
+  app.api.EventBus.on('tasks:changed', payload => taskEvents.push(toPlain(payload)));
+  app.api.EventBus.on('task:status', payload => statusEvents.push(toPlain(payload)));
+
+  module.setMode('school_year');
+  module.setMode('invalid');
+  module.setMode('vacation');
+  assert.equal(module.addItem({}).ok, false);
+  const itemId = addItem(module, { subject: 'Synthetic event item', dueDate: '2026-08-21' });
+  module.setTaskStatus(itemId, 'done');
+  module.setTaskStatus(itemId, 'done');
+  assert.equal(module.addLesson({ weekday: 4, subject: 'Synthetic lesson', startTime: '09:00', endTime: '10:00' }).ok, true);
+  const lessonId = module.getSchedule()[0].id;
+  module.deleteLesson(lessonId);
+  module.deleteItem('missing');
+  module.deleteItem(itemId);
+  module.deleteItem(itemId);
+
+  assert.deepEqual(taskEvents, [
+    { moduleId: 'school', change: 'configuration' },
+    { moduleId: 'school', change: 'created' },
+    { moduleId: 'school', change: 'deleted' }
+  ]);
+  assert.equal(taskEvents.every(payload => Object.keys(payload).sort().join(',') === 'change,moduleId'), true);
+  assert.deepEqual(statusEvents, [{ moduleId: 'school', taskId: itemId, status: 'done' }]);
 });
 
 test('wakacje filtrują tylko elementy bez terminu, a getTasks zachowuje wszystkie statusy', async t => {
@@ -81,7 +177,7 @@ test('wakacje filtrują tylko elementy bez terminu, a getTasks zachowuje wszystk
   module.setTaskStatus(dueDone, 'done');
   module.setTaskStatus(dueSkipped, 'skipped');
   module.setMode('vacation');
-  const vacationTasks = toPlain(module.getTasks());
+  const vacationTasks = toPlain(module.getTasks('2026-08-20'));
   const visibleIds = vacationTasks.map(task => task.id);
 
   assert.equal(visibleIds.includes(dueTodo), true);
@@ -93,7 +189,7 @@ test('wakacje filtrują tylko elementy bez terminu, a getTasks zachowuje wszystk
   assert.equal(vacationTasks.find(task => task.id === dueDone).completedDate, '2026-08-20');
 
   module.setTaskStatus(dueDone, 'todo');
-  assert.equal(module.getTasks().find(task => task.id === dueDone).completedDate, null);
+  assert.equal(module.getTasks('2026-08-20').find(task => task.id === dueDone).completedDate, null);
   assert.equal(module.getItems().length, 5, 'filtr wakacyjny nie usuwa danych');
 });
 
@@ -131,8 +227,8 @@ test('różne dni i instancje aplikacji mają niezależne dane oraz priorytety',
 
   assert.equal(firstSchool.getItems().length, 1);
   assert.equal(secondSchool.getItems().length, 1);
-  assert.equal(firstSchool.getTasks()[0].priority, 2.8);
-  assert.equal(secondSchool.getTasks()[0].priority, 2.5);
-  assert.match(firstSchool.getTasks()[0].title, /Isolated first/);
-  assert.match(secondSchool.getTasks()[0].title, /Isolated second/);
+  assert.equal(firstSchool.getTasks('2026-08-19')[0].priority, 28);
+  assert.equal(secondSchool.getTasks('2026-08-20')[0].priority, 25);
+  assert.match(firstSchool.getTasks('2026-08-19')[0].title, /Isolated first/);
+  assert.match(secondSchool.getTasks('2026-08-20')[0].title, /Isolated second/);
 });

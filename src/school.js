@@ -11,12 +11,12 @@ const SCHOOL_TYPE_LABELS = {
   project: 'Projekt', exam: 'Egzamin', review: 'Powtórka', material: 'Materiał do nauki'
 };
 
-// Priorytet BAZOWY typu (przed uwzględnieniem terminu) — mieści się
-// świadomie w przedziale 3.2-4.8, czyli MIĘDZY treningiem (3) a
-// angielskim (5): szkoła jako całość jest ważniejsza niż projekty
+// Priorytet BAZOWY typu (przed uwzględnieniem terminu) — całkowita
+// skala Task v2 zachowuje wcześniejszą kolejność typów: szkoła
+// jako całość jest ważniejsza niż projekty
 // poboczne, ale bez pilnego terminu nie przebija zdrowia/snu/treningu.
 const SCHOOL_TYPE_BASE_PRIORITY = {
-  exam: 3.2, test: 3.4, quiz: 3.6, project: 3.8, homework: 4.2, review: 4.4, material: 4.8
+  exam: 32, test: 34, quiz: 36, project: 38, homework: 42, review: 44, material: 48
 };
 
 // XP bazowe per typ — większy ciężar = większa nagroda, spójne
@@ -35,18 +35,6 @@ const SCHOOL_LOAD_OVERDUE_TASK_WEIGHT = 1.5;
 const SCHOOL_LOAD_MEDIUM_THRESHOLD = 180;
 const SCHOOL_LOAD_HIGH_THRESHOLD = 360;
 
-// Prawdziwa walidacja kalendarzowa — regex sprawdza tylko kształt
-// (pkt B/5). new Date() po cichu "przenosi" nieistniejące daty
-// (np. 2026-02-31 → 2026-03-03), więc dopiero porównanie odczytanych
-// z powrotem rok/miesiąc/dzień z tym, co wpisano, wykrywa błąd.
-function isValidCalendarDateString(dateStr) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
-  const [y, m, d] = dateStr.split('-').map(Number);
-  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
-  const dt = new Date(y, m - 1, d);
-  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
-}
-
 // Walidacja godziny GG:MM w pełnym zakresie 00-23 / 00-59 (pkt B/6) —
 // sam regex formatu przepuściłby np. 29:70.
 function isValidTimeString(timeStr) {
@@ -55,36 +43,33 @@ function isValidTimeString(timeStr) {
   return h >= 0 && h <= 23 && m >= 0 && m <= 59;
 }
 
-function daysUntil(dueDate) {
+function daysUntil(dueDate, baseDate) {
   if (!dueDate) return null;
   if (!isValidCalendarDateString(dueDate)) return null; // pkt 9: nigdy NaN do priorytetów
-  const today = new Date(localDateKey() + 'T00:00:00');
-  const due = new Date(dueDate + 'T00:00:00');
-  const diff = Math.round((due - today) / 86400000);
-  return Number.isNaN(diff) ? null : diff;
+  return differenceInCalendarDays(baseDate, dueDate);
 }
 
 // Jawna reguła eskalacji priorytetu wg terminu (wymóg pkt 10).
-// Termin dziś/jutro potrafi przebić trening (3) — to jest właśnie
+// Termin dziś/jutro potrafi przebić trening (30) — to jest właśnie
 // mechanizm, dzięki któremu trening "przesuwa się" pod dużym
 // obciążeniem szkolnym: PriorityEngine i tak już wypełnia budżet
 // czasu wg priorytetu, więc pilne zadanie szkolne naturalnie
 // wygrywa o czas z treningiem BEZ ŻADNEJ specjalnej logiki
 // w PriorityEngine/DecisionEngine — obie te warstwy zostają
 // dokładnie takie, jak w Kroku 3.
-function computeSchoolPriority(item, mode) {
+function computeSchoolPriority(item, mode, date) {
   // UWAGA: widoczność w trybie wakacyjnym jest już rozstrzygnięta w
-  // SchoolModule.getTasks() (filtr dueDate / activeDuringVacation) —
+  // SchoolModule.getTasks(date) (filtr dueDate / activeDuringVacation) —
   // ta funkcja NIE decyduje o widoczności, tylko o priorytecie
   // elementów, które i tak zostały uznane za widoczne. Parametr `mode`
   // zostaje w sygnaturze dla ewentualnych przyszłych, jawnych różnic
   // w priorytecie między rokiem szkolnym a wakacjami (obecnie brak).
-  const base = SCHOOL_TYPE_BASE_PRIORITY[item.type] ?? 4.5;
-  const daysLeft = daysUntil(item.dueDate);
+  const base = SCHOOL_TYPE_BASE_PRIORITY[item.type] ?? 45;
+  const daysLeft = daysUntil(item.dueDate, date);
   if (daysLeft === null) return base;       // brak terminu (np. materiał) — priorytet bazowy typu
-  if (daysLeft <= 0) return 2.5;             // termin dziś/przekroczony — nad treningiem
-  if (daysLeft === 1) return 2.8;            // jutro — wciąż nad treningiem
-  if (daysLeft <= 3) return Math.min(base, 3.5); // pilne — blisko/nad treningiem zależnie od typu
+  if (daysLeft <= 0) return 25;             // termin dziś/przekroczony — nad treningiem
+  if (daysLeft === 1) return 28;            // jutro — wciąż nad treningiem
+  if (daysLeft <= 3) return Math.min(base, 35); // bliski termin — zachowana kolejność typów
   return base;                                // spokojny termin — zwykły priorytet typu
 }
 
@@ -104,6 +89,23 @@ function validateSchoolItem(raw) {
   const difficulty = parseInt(raw.difficulty, 10);
   if (!Number.isInteger(difficulty) || difficulty < 1 || difficulty > 5) errors.push('Trudność: liczba całkowita 1-5');
   return { valid: errors.length === 0, errors, minutes, difficulty };
+}
+
+const SCHOOL_TASK_TITLE_MAX_LENGTH = 300;
+
+function schoolTaskTitle(item) {
+  const fullTitle = `${SCHOOL_TYPE_LABELS[item.type]}: ${item.subject} — ${item.title}`;
+  if (fullTitle.length <= SCHOOL_TASK_TITLE_MAX_LENGTH) return fullTitle;
+
+  // Iteracja po punktach kodowych zapobiega pozostawieniu samotnej
+  // połówki pary surogatów przy granicy skrócenia. Limit odpowiada
+  // semantyce String.length używanej przez validateTaskV2.
+  let shortened = '';
+  for (const character of fullTitle) {
+    if (shortened.length + character.length > SCHOOL_TASK_TITLE_MAX_LENGTH - 1) break;
+    shortened += character;
+  }
+  return shortened + '…';
 }
 
 // existingSchedule (opcjonalnie) — lista już zapisanych lekcji, do
@@ -139,11 +141,11 @@ function validateLesson(raw, existingSchedule, excludeLessonId) {
    ============================================================
    Zgodność z kontraktem Module: id, name, getTasks, getStats,
    render (wymagane), setTaskStatus, getDayContext (opcjonalne, oba
-   obecne). Tryb rok_szkolny/wakacje — w wakacjach getTasks() NIE
+   obecne). Tryb rok_szkolny/wakacje — w wakacjach getTasks(date) NIE
    zwraca [] (poprawka Kroku 6, pkt 10-13): elementy z dueDate
    pozostają zawsze widoczne, elementy bez dueDate są widoczne tylko
    gdy activeDuringVacation === true, inaczej są "uśpione" (nadal
-   istnieją w Store, tylko niewidoczne w getTasks()).
+   istnieją w Store, tylko niewidoczne w getTasks(date)).
 
    NIEZALEŻNOŚĆ: SchoolModule nigdy nie odwołuje się do
    TrainingModule/LearningModule/TRAINING_DAYS/ROADMAP_STAGES.
@@ -163,8 +165,10 @@ const SchoolModule = {
   getMode() { return Store.get('school:mode', 'school_year'); },
   setMode(mode) {
     if (mode !== 'school_year' && mode !== 'vacation') return;
+    if (this.getMode() === mode) return;
     Store.set('school:mode', mode);
     EventBus.emit('school:modeChange', { mode });
+    emitTasksChanged(this.id, 'configuration');
   },
 
   getItems() { return Store.get('school:items', []); },
@@ -186,13 +190,16 @@ const SchoolModule = {
     });
     Store.set('school:items', items);
     EventBus.emit('school:itemAdded', {});
+    emitTasksChanged(this.id, 'created');
     return { ok: true, errors: [] };
   },
 
   deleteItem(itemId) {
-    const items = this.getItems().filter(i => i.id !== itemId);
-    Store.set('school:items', items);
+    const current = this.getItems();
+    if (!current.some(item => item.id === itemId)) return;
+    Store.set('school:items', current.filter(i => i.id !== itemId));
     EventBus.emit('school:itemDeleted', { itemId });
+    emitTasksChanged(this.id, 'deleted');
   },
 
   addLesson(raw) {
@@ -209,15 +216,16 @@ const SchoolModule = {
   },
 
   // ==== Kontrakt Module ====
-  getTasks() {
+  getTasks(date) {
+    assertPlanningDate(date);
     const mode = this.getMode();
     return this.getItems()
-      // Kontrakt Module (pkt 10.4): getTasks() zwraca WSZYSTKIE statusy —
+      // Kontrakt Module: getTasks(date) zwraca WSZYSTKIE statusy —
       // to PriorityEngine.collectOpenTasks() filtruje 'todo' do planowania,
       // a ekran "Ukończone dziś" potrzebuje 'done'. SchoolModule wcześniej
       // zwracał tylko 'todo', przez co ukończone zadanie szkolne znikało
       // bez możliwości cofnięcia — to była realna niespójność z resztą
-      // aplikacji (patrz TrainingModule.getTasks()).
+      // aplikacji (patrz TrainingModule.getTasks(date)).
       //
       // W trybie wakacyjnym (pkt 10-13): element z dueDate jest ZAWSZE
       // widoczny niezależnie od trybu i activeDuringVacation — świadomie
@@ -232,7 +240,7 @@ const SchoolModule = {
         return !!i.activeDuringVacation;
       })
       .map(i => {
-        const daysLeft = daysUntil(i.dueDate);
+        const daysLeft = daysUntil(i.dueDate, date);
         const why = i.dueDate
           ? (daysLeft <= 0 ? 'Termin dziś (albo minął) — najwyższy priorytet w obrębie szkoły.'
              : daysLeft === 1 ? 'Termin jutro — wymaga uwagi już dziś.'
@@ -240,18 +248,21 @@ const SchoolModule = {
           : 'Materiał bez sztywnego terminu — nadrabiaj w wolnych chwilach.';
         return {
           id: i.id, moduleId: this.id, goalId: 'school', schoolItemType: i.type,
-          title: `${SCHOOL_TYPE_LABELS[i.type]}: ${i.subject} — ${i.title}`,
+          title: schoolTaskTitle(i),
           why, estimatedMinutes: i.estimatedMinutes, difficulty: i.difficulty,
-          xp: SCHOOL_TYPE_XP[i.type] ?? 20, priority: computeSchoolPriority(i, mode),
+          xp: SCHOOL_TYPE_XP[i.type] ?? 20, priority: computeSchoolPriority(i, mode, date),
+          planningClass: daysLeft !== null && daysLeft <= 1 ? 'urgent' : 'flexible',
           status: i.status, completedDate: i.completedDate, dueDate: i.dueDate
         };
       });
   },
 
   setTaskStatus(taskId, status) {
+    if (!['todo', 'done', 'skipped'].includes(status)) return;
     const items = this.getItems();
     const idx = items.findIndex(i => i.id === taskId);
     if (idx < 0) return;
+    if (items[idx].status === status) return;
     items[idx] = { ...items[idx], status, completedDate: status === 'done' ? localDateKey() : null };
     Store.set('school:items', items);
     EventBus.emit('task:status', { moduleId: this.id, taskId, status });
@@ -269,6 +280,7 @@ const SchoolModule = {
   // twardo zakodowane ModuleRegistry.get('school').
   getTodayLoadLevel() {
     const mode = this.getMode();
+    const today = localDateKey();
     // Plan lekcji nie obciąża dnia w wakacje (pkt 14) — w roku
     // szkolnym liczymy minuty lekcji dzisiejszego dnia tygodnia.
     const todayWeekday = new Date().getDay();
@@ -281,14 +293,14 @@ const SchoolModule = {
       }, 0);
 
     // Zadania z terminem są zawsze brane pod uwagę (niezależnie od
-    // trybu — patrz getTasks()), rozdzielone na "dziś/jutro" i
+    // trybu — patrz getTasks(date)), rozdzielone na "dziś/jutro" i
     // "po terminie" z różnymi wagami (pkt 15).
     const dueItems = this.getItems().filter(i => i.status === 'todo' && i.dueDate);
     const urgentMinutes = dueItems
-      .filter(i => { const dl = daysUntil(i.dueDate); return dl !== null && dl >= 0 && dl <= 1; })
+      .filter(i => { const dl = daysUntil(i.dueDate, today); return dl !== null && dl >= 0 && dl <= 1; })
       .reduce((sum, i) => sum + (i.estimatedMinutes || 0), 0);
     const overdueMinutes = dueItems
-      .filter(i => { const dl = daysUntil(i.dueDate); return dl !== null && dl < 0; })
+      .filter(i => { const dl = daysUntil(i.dueDate, today); return dl !== null && dl < 0; })
       .reduce((sum, i) => sum + (i.estimatedMinutes || 0), 0);
 
     const total = lessonMinutes * SCHOOL_LOAD_LESSON_WEIGHT
@@ -317,6 +329,7 @@ const SchoolModule = {
 
   render(container) {
     const mode = this.getMode();
+    const today = localDateKey();
     container.innerHTML = `
       <div class="card">
         <h3>🎓 Szkoła</h3>
@@ -370,13 +383,13 @@ const SchoolModule = {
       const renderList = () => {
         const current = this.getItems().slice().sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
         listEl.innerHTML = current.map(i => {
-          const dl = daysUntil(i.dueDate);
+          const dl = daysUntil(i.dueDate, today);
           const dueLabel = i.dueDate ? `${i.dueDate}${dl != null ? ` (${dl <= 0 ? 'dziś/po terminie' : 'za ' + dl + ' dni'})` : ''}` : 'brak terminu';
           const vacationLabel = !i.dueDate ? (i.activeDuringVacation ? ', aktywne w wakacje' : ', uśpione w wakacje') : '';
           return `
           <div class="item ${i.status === 'done' ? 'done' : ''}">
             <input type="checkbox" class="cb si-cb" data-id="${escapeAttr(i.id)}" ${i.status === 'done' ? 'checked' : ''}>
-            <label>${SCHOOL_TYPE_LABELS[i.type]}: <b>${escapeHtml(i.subject)}</b> — ${escapeHtml(i.title)} <span class="pillar-tag">(${dueLabel}${vacationLabel}, priorytet ${computeSchoolPriority(i, mode)})</span></label>
+            <label>${SCHOOL_TYPE_LABELS[i.type]}: <b>${escapeHtml(i.subject)}</b> — ${escapeHtml(i.title)} <span class="pillar-tag">(${dueLabel}${vacationLabel}, priorytet ${computeSchoolPriority(i, mode, today)})</span></label>
             <button class="mini-btn si-del" data-id="${escapeAttr(i.id)}">usuń</button>
           </div>`;
         }).join('') || '<p style="color:var(--text3);font-size:12px;">Brak zadań szkolnych.</p>';
@@ -469,7 +482,3 @@ const SchoolModule = {
   }
 };
 ModuleRegistry.register(SchoolModule);
-
-
-
-

@@ -15,6 +15,151 @@ function localDateKey(d = new Date()) {
   return `${y}-${m}-${day}`;
 }
 
+// Czyste reguły kalendarza cywilnego. Nie używają UTC, aktualnej
+// godziny ani długości doby w milisekundach, więc zachowują tę samą
+// semantykę podczas obu zmian DST.
+function isLeapCalendarYear(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function calendarDaysInMonth(year, month) {
+  const days = [31, isLeapCalendarYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return days[month - 1] ?? 0;
+}
+
+function parseCalendarDateString(dateStr) {
+  if (typeof dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > calendarDaysInMonth(year, month)) return null;
+  return { year, month, day };
+}
+
+function isValidCalendarDateString(dateStr) {
+  return parseCalendarDateString(dateStr) !== null;
+}
+
+function assertPlanningDate(date) {
+  if (!isValidCalendarDateString(date)) {
+    const error = new TypeError('Wymagana prawidłowa lokalna data YYYY-MM-DD.');
+    error.code = 'INVALID_DATE';
+    throw error;
+  }
+  return date;
+}
+
+// Algorytm kalendarza gregoriańskiego zwraca numer dnia względem
+// 1970-01-01 bez tworzenia Date i bez konwersji stref czasowych.
+function civilDayOrdinal(date) {
+  const { year: originalYear, month, day } = parseCalendarDateString(assertPlanningDate(date));
+  const year = originalYear - (month <= 2 ? 1 : 0);
+  const era = Math.floor(year / 400);
+  const yearOfEra = year - era * 400;
+  const shiftedMonth = month + (month > 2 ? -3 : 9);
+  const dayOfYear = Math.floor((153 * shiftedMonth + 2) / 5) + day - 1;
+  const dayOfEra = yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
+  return era * 146097 + dayOfEra - 719468;
+}
+
+function positiveModulo(value, divisor) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function weekdayFromLocalDate(date) {
+  if (!isValidCalendarDateString(date)) return null;
+  return positiveModulo(civilDayOrdinal(date) + 4, 7); // 1970-01-01 był czwartkiem (4)
+}
+
+function differenceInCalendarDays(startDate, endDate) {
+  assertPlanningDate(startDate);
+  assertPlanningDate(endDate);
+  return civilDayOrdinal(endDate) - civilDayOrdinal(startDate);
+}
+
+/* ============================================================
+   CORE / Task v2 validator
+   Czysta walidacja wspólnego kontraktu. Dodatkowe bezpieczne pola
+   domenowe są dozwolone, ale przyszły planer nie będzie im ufał.
+   ============================================================ */
+const TASK_V2_REQUIRED_FIELDS = ['id', 'title', 'status', 'priority', 'estimatedMinutes', 'difficulty', 'planningClass'];
+const TASK_V2_OPTIONAL_FIELDS = ['why', 'xp', 'dueDate', 'completedDate'];
+const TASK_V2_SHARED_FIELDS = [...TASK_V2_REQUIRED_FIELDS, ...TASK_V2_OPTIONAL_FIELDS, 'moduleId', 'moduleName'];
+const TASK_V2_DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const TASK_V2_STATUSES = new Set(['todo', 'done', 'skipped']);
+const TASK_V2_PLANNING_CLASSES = new Set(['urgent', 'scheduled', 'flexible']);
+
+function validateTaskV2(task) {
+  const errors = [];
+  if (task === null || typeof task !== 'object' || Array.isArray(task)) {
+    return { valid: false, errors: ['Task musi być zwykłym obiektem danych.'] };
+  }
+  try {
+    const prototype = Object.getPrototypeOf(task);
+    if (prototype !== Object.prototype && prototype !== null) {
+      errors.push('Task ma niedozwolony prototyp.');
+    }
+    const ownKeys = Reflect.ownKeys(task);
+    if (ownKeys.some(key => typeof key === 'symbol')) {
+      errors.push('Task zawiera niedozwolony klucz symboliczny.');
+    }
+    if (ownKeys.some(key => typeof key === 'string' && TASK_V2_DANGEROUS_KEYS.has(key))) {
+      errors.push('Task zawiera niebezpieczny własny klucz.');
+    }
+    for (const field of TASK_V2_SHARED_FIELDS) {
+      const descriptor = Object.getOwnPropertyDescriptor(task, field);
+      if (descriptor && (typeof descriptor.get === 'function' || typeof descriptor.set === 'function')) {
+        errors.push(`${field}: gettery i settery są niedozwolone`);
+      }
+    }
+  } catch (error) {
+    return { valid: false, errors: ['Task nie może zostać bezpiecznie odczytany.'] };
+  }
+  if (errors.length) return { valid: false, errors };
+
+  try {
+    for (const field of TASK_V2_REQUIRED_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(task, field)) errors.push(`${field}: wymagane pole`);
+    }
+    if (typeof task.id !== 'string' || !task.id.trim() || task.id.length > 200) {
+      errors.push('id: wymagany niepusty string do 200 znaków');
+    }
+    if (typeof task.title !== 'string' || !task.title.trim() || task.title.length > 300) {
+      errors.push('title: wymagany niepusty string do 300 znaków');
+    }
+    if (!TASK_V2_STATUSES.has(task.status)) errors.push('status: dozwolone todo, done albo skipped');
+    if (!Number.isInteger(task.priority) || task.priority < 0 || task.priority > 100) {
+      errors.push('priority: wymagana skończona liczba całkowita 0-100');
+    }
+    if (!Number.isInteger(task.estimatedMinutes) || task.estimatedMinutes < 1 || task.estimatedMinutes > 1440) {
+      errors.push('estimatedMinutes: wymagana liczba całkowita 1-1440');
+    }
+    if (!Number.isInteger(task.difficulty) || task.difficulty < 1 || task.difficulty > 5) {
+      errors.push('difficulty: wymagana liczba całkowita 1-5');
+    }
+    if (!TASK_V2_PLANNING_CLASSES.has(task.planningClass)) {
+      errors.push('planningClass: dozwolone urgent, scheduled albo flexible');
+    }
+
+    if (Object.prototype.hasOwnProperty.call(task, 'why')
+        && (typeof task.why !== 'string' || task.why.length > 2000)) {
+      errors.push('why: wymagany string do 2000 znaków');
+    }
+    if (Object.prototype.hasOwnProperty.call(task, 'xp')
+        && (!Number.isInteger(task.xp) || task.xp < 0 || task.xp > 100000)) {
+      errors.push('xp: wymagana liczba całkowita 0-100000');
+    }
+    for (const field of ['dueDate', 'completedDate']) {
+      if (Object.prototype.hasOwnProperty.call(task, field)
+          && task[field] !== null
+          && !isValidCalendarDateString(task[field])) {
+        errors.push(`${field}: wymagane null albo prawidłowa data YYYY-MM-DD`);
+      }
+    }
+  } catch (error) {
+    return { valid: false, errors: ['Task nie może zostać bezpiecznie odczytany.'] };
+  }
+  return { valid: errors.length === 0, errors };
+}
+
 /* ============================================================
    CORE / EVENTBUS
    Prosty publish-subscribe. Moduły nie wołają się nawzajem
@@ -35,6 +180,15 @@ const EventBus = (() => {
   }
   return { on, off, emit };
 })();
+
+const TASK_CHANGE_TYPES = Object.freeze(['created', 'updated', 'deleted', 'selection', 'configuration']);
+
+function emitTasksChanged(moduleId, change) {
+  if (typeof moduleId !== 'string' || !moduleId || !TASK_CHANGE_TYPES.includes(change)) {
+    throw new TypeError('Nieprawidłowe zdarzenie tasks:changed.');
+  }
+  EventBus.emit('tasks:changed', { moduleId, change });
+}
 
 /* ============================================================
    CORE / STORE

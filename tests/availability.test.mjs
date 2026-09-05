@@ -442,7 +442,7 @@ test('zapis Availability nie zmienia budżetu, PriorityEngine, DecisionEngine an
     text: button.textContent
   }));
   const priorityBefore = toPlain(app.api.PriorityEngine.pickWithinBudget(tasks, 60));
-  const decisionBefore = toPlain(app.api.DecisionEngine.planToday(60));
+  const decisionBefore = toPlain(app.api.DecisionEngine.planToday(60, '2026-08-20'));
   const todayBefore = app.document.getElementById('view-dzis').innerHTML;
   const moduleIdsBefore = toPlain(app.api.ModuleRegistry.all().map(module => module.id));
 
@@ -457,7 +457,7 @@ test('zapis Availability nie zmienia budżetu, PriorityEngine, DecisionEngine an
     text: button.textContent
   })), budgetButtonsBefore);
   assert.deepEqual(toPlain(app.api.PriorityEngine.pickWithinBudget(tasks, 60)), priorityBefore);
-  assert.deepEqual(toPlain(app.api.DecisionEngine.planToday(60)), decisionBefore);
+  assert.deepEqual(toPlain(app.api.DecisionEngine.planToday(60, '2026-08-20')), decisionBefore);
   assert.equal(app.document.getElementById('view-dzis').innerHTML, todayBefore);
   assert.deepEqual(toPlain(app.api.ModuleRegistry.all().map(module => module.id)), moduleIdsBefore);
   assert.deepEqual(moduleIdsBefore, ['training', 'it', 'school', 'english']);

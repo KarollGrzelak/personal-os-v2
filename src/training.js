@@ -490,6 +490,9 @@ function reconcileSession(dayId, date, opts = {}) {
 }
 
 function finishSession(dayId, date) {
+  const taskId = `${dayId}:${date}`;
+  const current = Store.get('training:sessions', {})[taskId];
+  if (sessionToTaskStatus(current?.status || 'planned') === 'done') return;
   const profile = TrainingModule.getProfile();
   const plan = TrainingPlanEngine.generatePlan(profile);
   const day = plan.days.find(d => d.id === dayId) || TRAINING_DAYS.find(d => d.id === dayId);
@@ -502,12 +505,13 @@ function finishSession(dayId, date) {
   } else {
     reconcileSession(dayId, date, { explicitFinish: true });
   }
-  EventBus.emit('task:status', { moduleId: 'training', taskId: `${dayId}:${date}`, status: 'done' });
+  EventBus.emit('task:status', { moduleId: 'training', taskId, status: 'done' });
 }
 
 function skipSession(dayId, date) {
   const sessions = Store.get('training:sessions', {});
   const taskId = `${dayId}:${date}`;
+  if (sessions[taskId]?.status === 'skipped') return;
   sessions[taskId] = { ...(sessions[taskId] || {}), status: 'skipped', completedDate: date };
   Store.set('training:sessions', sessions);
   EventBus.emit('task:status', { moduleId: 'training', taskId, status: 'skipped' });
@@ -516,6 +520,8 @@ function skipSession(dayId, date) {
 function undoSession(dayId, date) {
   const sessions = Store.get('training:sessions', {});
   const taskId = `${dayId}:${date}`;
+  const current = sessions[taskId];
+  if (sessionToTaskStatus(current?.status || 'planned') === 'todo') return;
   sessions[taskId] = { status: 'planned', completedDate: null, durationMinutes: null, sessionRpe: null };
   Store.set('training:sessions', sessions);
   reconcileSession(dayId, date); // jeśli logi wciąż istnieją, podniesie z powrotem do in_progress/partial/completed
@@ -533,14 +539,14 @@ const TrainingModule = {
     return TrainingPlanEngine.generatePlan(this.getProfile());
   },
 
-  getTasks() {
-    const today = localDateKey();
-    const weekday = new Date().getDay();
+  getTasks(date) {
+    assertPlanningDate(date);
+    const weekday = weekdayFromLocalDate(date);
     const plan = this.getActivePlan();
     const day = plan.days.find(d => d.weekdays.includes(weekday));
     if (!day) return [];
 
-    const taskId = `${day.id}:${today}`;
+    const taskId = `${day.id}:${date}`;
     const sessions = Store.get('training:sessions', {});
     const session = sessions[taskId] || { status: 'planned', completedDate: null };
 
@@ -551,10 +557,11 @@ const TrainingModule = {
       title: session.status === 'partial' ? `Dokończ: ${day.name}` : day.name,
       status: sessionToTaskStatus(session.status),
       sessionStatus: session.status,
-      priority: 3,
+      priority: 30,
       estimatedMinutes: day.estimatedMinutes,
       difficulty: day.difficulty,
       xp: day.xp,
+      planningClass: 'scheduled',
       completedDate: session.completedDate,
       dayId: day.id
     }];
@@ -590,6 +597,9 @@ const TrainingModule = {
 
     const result = validateLogEntry(exercise.measurementType, rawEntry);
     if (!result.valid) return { ok: false, errors: result.errors };
+    const beforeTaskProjection = isValidCalendarDateString(date)
+      ? JSON.stringify(this.getTasks(date))
+      : null;
 
     const logs = Store.get('training:exerciseLogs', {});
     logs[exerciseId] = logs[exerciseId] || [];
@@ -612,12 +622,20 @@ const TrainingModule = {
 
     DayEngine.recordTrainingLoad(date, this._computeLoadForDate(date));
     EventBus.emit('training:log', { exerciseId, record });
+    if (beforeTaskProjection !== null && beforeTaskProjection !== JSON.stringify(this.getTasks(date))) {
+      emitTasksChanged(this.id, 'updated');
+    }
     return { ok: true, errors: [] };
   },
 
   deleteExerciseLog(exerciseId, date) {
     const logs = Store.get('training:exerciseLogs', {});
     if (!logs[exerciseId]) return;
+    const existingIndex = logs[exerciseId].findIndex(entry => entry.date === date);
+    if (existingIndex < 0) return;
+    const beforeTaskProjection = isValidCalendarDateString(date)
+      ? JSON.stringify(this.getTasks(date))
+      : null;
     logs[exerciseId] = logs[exerciseId].filter(e => e.date !== date);
     Store.set('training:exerciseLogs', logs);
 
@@ -628,6 +646,9 @@ const TrainingModule = {
 
     DayEngine.recordTrainingLoad(date, this._computeLoadForDate(date));
     EventBus.emit('training:log', { exerciseId, deleted: date });
+    if (beforeTaskProjection !== null && beforeTaskProjection !== JSON.stringify(this.getTasks(date))) {
+      emitTasksChanged(this.id, 'updated');
+    }
   },
 
   getExerciseHistory(exerciseId) {
@@ -680,8 +701,20 @@ const TrainingModule = {
   saveProfile(profile) {
     const result = validateProfile(profile);
     if (!result.valid) return { ok: false, errors: result.errors };
+    const existingProfile = this.getProfile();
+    if (JSON.stringify(existingProfile) === JSON.stringify(profile)) return { ok: true, errors: [] };
+    const planningSignature = source => JSON.stringify(TrainingPlanEngine.generatePlan(source).days.map(day => ({
+      id: day.id,
+      name: day.name,
+      weekdays: day.weekdays,
+      estimatedMinutes: day.estimatedMinutes,
+      difficulty: day.difficulty,
+      xp: day.xp
+    })));
+    const planningChanged = planningSignature(existingProfile) !== planningSignature(profile);
     Store.set('training:profile', profile);
     EventBus.emit('training:profile', profile);
+    if (planningChanged) emitTasksChanged(this.id, 'configuration');
     return { ok: true, errors: [] };
   },
 
@@ -962,5 +995,3 @@ const TrainingModule = {
   }
 };
 ModuleRegistry.register(TrainingModule);
-
-

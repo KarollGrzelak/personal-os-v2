@@ -6,7 +6,7 @@ Personal OS v2 is a single-page static browser application split across eleven p
 
 - `index.html` contains the document structure and loads the ten local assets;
 - `src/styles.css` contains the extracted application stylesheet;
-- `src/core.js` contains the mechanically extracted Core foundation: local date handling, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
+- `src/core.js` contains the mechanically extracted Core foundation: local and civil date handling, the pure Task v2 validator, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
 - `src/today.js` contains the mechanically extracted Today layer: DayEngine, HabitEngine, Today rendering, time budgets, PriorityEngine, and DecisionEngine;
 - `src/training.js` contains the mechanically extracted Training domain: exercise data, validation, TrainingPlanEngine, session and log rules, TrainingModule, and its view;
 - `src/learning.js` contains the mechanically extracted Learning domain: Roadmap, LessonGuide, validation, escaped rendering, reconciliation, and LearningModule registration;
@@ -38,7 +38,7 @@ The Core declarations share the document's global lexical environment with the f
 
 ### EventBus
 
-`EventBus` provides small, explicit notifications such as `store:change`, `route:change`, and `backup:importCompleted`. Domain logic should remain in engines and modules rather than being hidden inside event handlers.
+`EventBus` provides small, explicit notifications such as `store:change`, `route:change`, and `backup:importCompleted`. A task-pool mutation additionally emits `tasks:changed` with exactly `{ moduleId, change }`, where `change` is `created`, `updated`, `deleted`, `selection`, or `configuration`. Explicit status mutations continue to emit only `task:status`, and no task-pool event contains task IDs, dates, titles, minutes, priorities, profiles, or other user content. Domain logic should remain in engines and modules rather than being hidden inside event handlers. The current Today view does not subscribe to `tasks:changed` yet.
 
 ### Store
 
@@ -58,10 +58,18 @@ Calls without options retain the original behavior. A successful write follows t
 `ModuleRegistry` registers modules and validates the shared module contract. A module exposes:
 
 - `id` and `name`;
-- `getTasks()`;
+- `getTasks(date)` where `date` is a required, valid local `YYYY-MM-DD` calendar date;
 - `getStats()`;
 - `render(container)`;
 - optional `setTaskStatus(taskId, status)`.
+
+Missing or invalid planning dates synchronously throw `TypeError` with `code === 'INVALID_DATE'` before domain reads, writes, rendering, or events.
+
+### Civil dates and Task v2
+
+Core is the single source for strict real-calendar `YYYY-MM-DD` validation, planning-date assertion, weekday `0..6`, a civil day ordinal, and calendar-day differences. These calculations use numeric Gregorian components rather than UTC timestamps or 23/25-hour day lengths, so month, year, leap-day, and Europe/Warsaw DST boundaries have the same deterministic semantics.
+
+The pure Task v2 validator accepts safe plain data objects and does not mutate or normalize them. Required fields are `id`, `title`, `status`, integer `priority` `0..100`, integer `estimatedMinutes` `1..1440`, integer `difficulty` `1..5`, and `planningClass`. Optional common fields are `why`, `xp`, `dueDate`, and `completedDate`. Safe domain-specific fields remain allowed. Dangerous own keys, unsafe prototypes, accessors on common fields, invalid dates, non-finite values, and boundary violations are rejected. A future planner will source `moduleId` and `moduleName` from ModuleRegistry rather than trusting task records.
 
 ### Router
 
@@ -71,8 +79,8 @@ Calls without options retain the original behavior. A successful write follows t
 
 - `DayEngine` calculates daily energy from the local date and check-in data.
 - `HabitEngine` owns habit completion and streak rules.
-- `PriorityEngine` selects tasks that fit the selected time budget.
-- `DecisionEngine` combines energy, priorities, tasks, and habits for the Today view.
+- `PriorityEngine` collects tasks for an explicit planning date and selects tasks that fit the selected time budget.
+- `DecisionEngine` combines energy, priorities, tasks, and habits for an explicit planning date in the Today view.
 - `TrainingPlanEngine` derives the training plan from the validated training profile.
 - `RoadmapEngine` owns IT roadmap stages, criteria, reconciliation, and unlocking rules.
 
@@ -80,35 +88,35 @@ Engines communicate with modules through stable contracts and shared task record
 
 The Today declarations in `src/today.js` depend on Core declarations and share the same global lexical environment with the later `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/backup.js`, and `src/app.js`. Their references to `escapeHtml` and `escapeAttr` are deferred until rendering after `src/learning.js` has loaded. Conversely, later application code depends on `DayEngine`, `DEFAULT_HABITS`, `renderDzis`, and `renderTodayTasks`.
 
-The Training declarations in `src/training.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, and `ModuleRegistry`, and on Today declarations including `DayEngine` and `renderTodayTasks`. Their reference to `escapeAttr` is deferred until rendering after `src/learning.js` has loaded. Later School, Backup, and initialization code depends on the already registered `TrainingModule`, while backup validation in `src/backup.js` uses Training declarations such as `validateProfile`.
+The Training declarations in `src/training.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, the civil weekday helper, and `ModuleRegistry`, and on Today declarations including `DayEngine` and `renderTodayTasks`. Their reference to `escapeAttr` is deferred until rendering after `src/learning.js` has loaded. Later School, Backup, and initialization code depends on the already registered `TrainingModule`, while backup validation in `src/backup.js` uses Training declarations such as `validateProfile`.
 
-The Learning declarations in `src/learning.js` depend on Core declarations including `Store`, `EventBus`, and `ModuleRegistry`, and on Today rendering through `renderTodayTasks`. The Learning layer performs the existing Roadmap validation and reconciliation, then registers `LearningModule` before the following School layer loads. Its reference to `isValidCalendarDateString` is deferred until after that declaration is available in `src/school.js`. Conversely, School and other later UI code use `escapeHtml` and `escapeAttr` from Learning, while migration 5 and backup code use LessonGuide validation and Roadmap declarations.
+The Learning declarations in `src/learning.js` depend on Core declarations including `Store`, `EventBus`, the shared planning-date assertion, and `ModuleRegistry`, and on Today rendering through `renderTodayTasks`. The Learning layer performs the existing Roadmap validation and reconciliation, then registers `LearningModule` before the following School layer loads. Conversely, School and other later UI code use `escapeHtml` and `escapeAttr` from Learning, while migration 5 and backup code use LessonGuide validation and Roadmap declarations.
 
-The School declarations in `src/school.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, and `ModuleRegistry`, on Today rendering through `renderTodayTasks`, and on Learning's `escapeHtml` and `escapeAttr`. During loading the layer initializes its constants and registers `SchoolModule`; Store access and rendering remain deferred until later application initialization or user interaction. English uses School's calendar-date validator, while Backup uses School's `isValidCalendarDateString`, `validateSchoolItem`, and `validateLesson` in cross-domain validation.
+The School declarations in `src/school.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, the shared civil date helpers, and `ModuleRegistry`, on Today rendering through `renderTodayTasks`, and on Learning's `escapeHtml` and `escapeAttr`. During loading the layer initializes its constants and registers `SchoolModule`; Store access and rendering remain deferred until later application initialization or user interaction. Backup uses Core's calendar-date validator plus School's `validateSchoolItem` and `validateLesson` in cross-domain validation.
 
-The Availability declarations in `src/availability.js` depend on Core's `Store`, `EventBus`, and local date helper; Learning's escaping helpers; and School's general calendar-date and clock-time validators. AvailabilityEngine is deliberately not a Module: it does not register with ModuleRegistry, create Tasks, read `school:*`, or participate in Today, PriorityEngine, DecisionEngine, or the manual 30/60/150-minute budgets. It stores one atomic `availability:configuration` value, where `null` is unconfigured, and reports nominal local minutes from weekly free-time intervals or a date exception that replaces the whole weekly day. Loading the layer only defines declarations; Store and DOM access remain deferred to calls and application initialization.
+The Availability declarations in `src/availability.js` depend on Core's `Store`, `EventBus`, shared calendar-date and weekday helpers; Learning's escaping helpers; and School's clock-time validator. AvailabilityEngine is deliberately not a Module: it does not register with ModuleRegistry, create Tasks, read `school:*`, or participate in Today, PriorityEngine, DecisionEngine, or the manual 30/60/150-minute budgets. It stores one atomic `availability:configuration` value, where `null` is unconfigured, and reports nominal local minutes from weekly free-time intervals or a date exception that replaces the whole weekly day. Loading the layer only defines declarations; Store and DOM access remain deferred to calls and application initialization.
 
-The English declarations in `src/english.js` depend on Core persistence and registration, Today task rendering, Learning's escaping and URL validation, and School's calendar-date validation. Loading the layer defines strict validators and operations, then registers `EnglishModule`; it does not read or write Store, touch DOM, or emit events. English exposes at most one current open Task at temporary priority `3.9`, plus activities completed today so completion can be undone even when the profile is disabled or invalid.
+The English declarations in `src/english.js` depend on Core persistence, registration, calendar validation, and planning-date assertion; Today task rendering; and Learning's escaping and URL validation. Loading the layer defines strict validators and operations, then registers `EnglishModule`; it does not read or write Store, touch DOM, or emit events. English exposes at most one current open Task at integer priority `39`, plus activities completed on the explicit planning date so completion can be undone even when the profile is disabled or invalid.
 
-The Backup declarations in `src/backup.js` depend on Core's `Store`, `createMemoryStore`, `runMigrations`, `DATA_VERSION`, `EventBus`, and `localDateKey`; Today's `DEFAULT_HABITS`; Training's `validateProfile`; Learning's Roadmap, LessonGuide, and timestamp declarations; School's date, item, and lesson validators; Availability's strict configuration validator; and English's strict validators. Loading the layer only initializes constants, validator maps, and Roadmap identifiers. Store access, migrations, events, DOM APIs, Blob creation, export, preview, import, commit, and rollback remain deferred until their functions are called. The final `src/app.js` uses the Backup API from its settings UI and attaches the aggregate import-completed listener during the existing synchronous initialization. All nine JavaScript files are ordered source layers sharing one global lexical environment, not independently executable modules.
+The Backup declarations in `src/backup.js` depend on Core's `Store`, `createMemoryStore`, `runMigrations`, `DATA_VERSION`, `EventBus`, `localDateKey`, and calendar validation; Today's `DEFAULT_HABITS`; Training's `validateProfile`; Learning's Roadmap, LessonGuide, and timestamp declarations; School's item and lesson validators; Availability's strict configuration validator; and English's strict validators. Loading the layer only initializes constants, validator maps, and Roadmap identifiers. Store access, migrations, events, DOM APIs, Blob creation, export, preview, import, commit, and rollback remain deferred until their functions are called. The final `src/app.js` uses the Backup API from its settings UI and attaches the aggregate import-completed listener during the existing synchronous initialization. All nine JavaScript files are ordered source layers sharing one global lexical environment, not independently executable modules.
 
 ## Modules
 
 ### Training
 
-The Training module manages a validated profile, generated plan, session state, exercise logs, completion status, and a temporary training-load calculation used by the daily energy model.
+The Training module manages a validated profile, generated plan, session state, exercise logs, completion status, and a temporary training-load calculation used by the daily energy model. `getTasks(date)` derives weekday and session ID only from that date and emits tasks at priority `30` with `planningClass: 'scheduled'`.
 
 ### IT learning
 
-The IT learning module manages roadmap stage statuses, criterion progress, and LessonGuide content. LessonGuide is attached content, never a task. Imported or edited guide data uses domain validation and escaped rendering. Resource URLs are revalidated at render time and accept only HTTP or HTTPS.
+The IT learning module manages roadmap stage statuses, criterion progress, and LessonGuide content. `getTasks(date)` validates the explicit date while its current criterion pool remains date-independent; tasks use priority `40` and `planningClass: 'flexible'`. LessonGuide is attached content, never a task. Imported or edited guide data uses domain validation and escaped rendering. Resource URLs are revalidated at render time and accept only HTTP or HTTPS.
 
 ### School
 
-The School module manages school items, the lesson schedule, workload, and school-year/vacation behavior. School items participate in the shared task contract used by the Today view.
+The School module manages school items, the lesson schedule, workload, and school-year/vacation behavior. School items calculate urgency against the explicit planning date: overdue/today is priority `25`, tomorrow `28`, up to three days is capped at `35`, and base type priorities are `32/34/36/38/42/44/48`. Overdue, today, and tomorrow are `urgent`; other School tasks are `flexible`.
 
 ### English
 
-The English module stores a strict editable profile and an ordered queue of atomic manual activities. At most one `todo` activity can be marked current. Status changes follow explicit `todo`, `done`, and `skipped` transitions; editing cannot alter status fields. The weekly minute value is informational in this MVP, and the module does not generate lessons, contact a network service, or assess resource quality.
+The English module stores a strict editable profile and an ordered queue of atomic manual activities. At most one `todo` activity can be marked current. `getTasks(date)` uses only the explicit date for completed activities; exposed tasks use priority `39` and `planningClass: 'flexible'`. Status changes follow explicit `todo`, `done`, and `skipped` transitions; editing cannot alter status fields. The weekly minute value is informational in this MVP, and the module does not generate lessons, contact a network service, or assess resource quality.
 
 ## AvailabilityEngine v1
 

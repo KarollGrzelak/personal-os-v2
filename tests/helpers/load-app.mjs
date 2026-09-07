@@ -8,7 +8,7 @@ process.env.TZ = 'Europe/Warsaw';
 
 const FIXED_NOW = '2026-08-20T08:00:00.000Z';
 const TEST_URL = 'https://personal-os.test/personal-os-v2/';
-const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/backup.js', './src/app.js'];
+const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/plan-day.js', './src/backup.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
 const EXPECTED_CORE_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[0], TEST_URL).href;
 const EXPECTED_TODAY_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[1], TEST_URL).href;
@@ -17,8 +17,9 @@ const EXPECTED_LEARNING_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[3], TEST_UR
 const EXPECTED_SCHOOL_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[4], TEST_URL).href;
 const EXPECTED_AVAILABILITY_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[5], TEST_URL).href;
 const EXPECTED_ENGLISH_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[6], TEST_URL).href;
-const EXPECTED_BACKUP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[7], TEST_URL).href;
-const EXPECTED_APP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[8], TEST_URL).href;
+const EXPECTED_PLAN_DAY_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[7], TEST_URL).href;
+const EXPECTED_BACKUP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[8], TEST_URL).href;
+const EXPECTED_APP_SCRIPT_URL = new URL(EXPECTED_SCRIPT_SOURCES[9], TEST_URL).href;
 const EXPECTED_STYLESHEET_URL = new URL(EXPECTED_STYLESHEET_SOURCE, TEST_URL).href;
 const SCRIPT_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 const SCRIPT_OPEN_PATTERN = /<script\b[^>]*>/gi;
@@ -81,6 +82,7 @@ const TEST_BRIDGE = `
   normalizeEnglishActivityContent,
   EnglishModule,
   renderEnglishResource,
+  PlanDayEngine,
   KNOWN_NAMESPACES,
   NAMESPACE_DEFAULTS,
   REQUIRED_NAMESPACES_BY_APP_DATA_VERSION,
@@ -113,6 +115,7 @@ const learningPath = path.join(projectRoot, 'src', 'learning.js');
 const schoolPath = path.join(projectRoot, 'src', 'school.js');
 const availabilityPath = path.join(projectRoot, 'src', 'availability.js');
 const englishPath = path.join(projectRoot, 'src', 'english.js');
+const planDayPath = path.join(projectRoot, 'src', 'plan-day.js');
 const backupPath = path.join(projectRoot, 'src', 'backup.js');
 const appPath = path.join(projectRoot, 'src', 'app.js');
 const stylesPath = path.join(projectRoot, 'src', 'styles.css');
@@ -229,6 +232,10 @@ export async function readEnglishSource() {
   return readFile(englishPath, 'utf8');
 }
 
+export async function readPlanDaySource() {
+  return readFile(planDayPath, 'utf8');
+}
+
 export async function readBackupSource() {
   return readFile(backupPath, 'utf8');
 }
@@ -241,7 +248,7 @@ export async function readStylesSource() {
   return readFile(stylesPath, 'utf8');
 }
 
-function createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, backupSource, appSource, stylesSource, control) {
+function createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, planDaySource, backupSource, appSource, stylesSource, control) {
   return {
     interceptors: [
       requestInterceptor(request => {
@@ -278,6 +285,11 @@ function createControlledResourceLoader(coreSource, todaySource, trainingSource,
         }
         if (request.url === EXPECTED_ENGLISH_SCRIPT_URL) {
           return new Response(englishSource, {
+            headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
+          });
+        }
+        if (request.url === EXPECTED_PLAN_DAY_SCRIPT_URL) {
+          return new Response(planDaySource, {
             headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
           });
         }
@@ -322,7 +334,7 @@ export async function loadApp({
   storage = {},
   unexpectedResourceUrl = null
 } = {}) {
-  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, backupSource, appSource, stylesSource] = await Promise.all([
+  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, planDaySource, backupSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
     readCoreSource(),
     readTodaySource(),
@@ -331,13 +343,14 @@ export async function loadApp({
     readSchoolSource(),
     readAvailabilitySource(),
     readEnglishSource(),
+    readPlanDaySource(),
     readBackupSource(),
     readAppSource(),
     readStylesSource()
   ]);
   const inspection = inspectIndexHtml(html);
   if (!inspection.isClassic || !inspection.scriptsAreAdjacent || !inspection.scriptsAtBodyEnd) {
-    throw new Error('index.html nie zawiera oczekiwanych sąsiadujących klasycznych skryptów core.js → today.js → training.js → learning.js → school.js → availability.js → english.js → backup.js → app.js na końcu body.');
+    throw new Error('index.html nie zawiera oczekiwanych sąsiadujących klasycznych skryptów core.js → today.js → training.js → learning.js → school.js → availability.js → english.js → plan-day.js → backup.js → app.js na końcu body.');
   }
   if (inspection.styleBlockCount !== 0
       || inspection.stylesheetCount !== 1
@@ -394,7 +407,7 @@ export async function loadApp({
   virtualConsole.on('error', (...args) => errors.console.push(args));
   virtualConsole.on('jsdomError', error => errors.jsdom.push(error));
   const resourceControl = { blocked: [], requests: [] };
-  const resourceLoader = createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, backupSource, appSource, stylesSource, resourceControl);
+  const resourceLoader = createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, planDaySource, backupSource, appSource, stylesSource, resourceControl);
 
   const fixedTimestamp = new Date(fixedNow).getTime();
   if (Number.isNaN(fixedTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);

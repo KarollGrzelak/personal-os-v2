@@ -11,6 +11,7 @@ import {
   readEnglishSource,
   readIndexHtml,
   readLearningSource,
+  readPlanDaySource,
   readSchoolSource,
   readStylesSource,
   readTodaySource,
@@ -18,8 +19,8 @@ import {
   toPlain
 } from './helpers/load-app.mjs';
 
-test('index.html wskazuje dziewięć uporządkowanych klasycznych skryptów i jeden zewnętrzny arkusz stylów', async () => {
-  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, backupSource, appSource, stylesSource] = await Promise.all([
+test('index.html wskazuje dziesięć uporządkowanych klasycznych skryptów i jeden zewnętrzny arkusz stylów', async () => {
+  const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, planDaySource, backupSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
     readCoreSource(),
     readTodaySource(),
@@ -28,14 +29,15 @@ test('index.html wskazuje dziewięć uporządkowanych klasycznych skryptów i je
     readSchoolSource(),
     readAvailabilitySource(),
     readEnglishSource(),
+    readPlanDaySource(),
     readBackupSource(),
     readAppSource(),
     readStylesSource()
   ]);
   const inspection = inspectIndexHtml(html);
 
-  assert.equal(inspection.scriptCount, 9);
-  assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/backup.js', './src/app.js']);
+  assert.equal(inspection.scriptCount, 10);
+  assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/plan-day.js', './src/backup.js', './src/app.js']);
   assert.equal(inspection.scriptDetails.every(script => script.hasSource), true);
   assert.equal(inspection.scriptDetails.every(script => script.inlineCode.trim() === ''), true);
   assert.equal(inspection.scriptDetails.every(script => script.hasForbiddenScheduling === false), true);
@@ -54,6 +56,7 @@ test('index.html wskazuje dziewięć uporządkowanych klasycznych skryptów i je
   assert.notEqual(schoolSource.length, 0);
   assert.notEqual(availabilitySource.length, 0);
   assert.notEqual(englishSource.length, 0);
+  assert.notEqual(planDaySource.length, 0);
   assert.notEqual(backupSource.length, 0);
   assert.notEqual(appSource.length, 0);
   assert.doesNotThrow(() => new vm.Script(coreSource, { filename: 'src/core.js' }));
@@ -63,8 +66,28 @@ test('index.html wskazuje dziewięć uporządkowanych klasycznych skryptów i je
   assert.doesNotThrow(() => new vm.Script(schoolSource, { filename: 'src/school.js' }));
   assert.doesNotThrow(() => new vm.Script(availabilitySource, { filename: 'src/availability.js' }));
   assert.doesNotThrow(() => new vm.Script(englishSource, { filename: 'src/english.js' }));
+  assert.doesNotThrow(() => new vm.Script(planDaySource, { filename: 'src/plan-day.js' }));
   assert.doesNotThrow(() => new vm.Script(backupSource, { filename: 'src/backup.js' }));
   assert.doesNotThrow(() => new vm.Script(appSource, { filename: 'src/app.js' }));
+});
+
+test('ładowanie PlanDay wyłącznie definiuje czysty silnik i nie rejestruje modułu', async () => {
+  const planDaySource = await readPlanDaySource();
+  const registrations = [];
+  const forbidden = label => new Proxy({}, {
+    get() { throw new Error(`${label} nie może być używany podczas ładowania PlanDay`); },
+    set() { throw new Error(`${label} nie może być używany podczas ładowania PlanDay`); }
+  });
+  const context = vm.createContext({
+    ModuleRegistry: { register(module) { registrations.push(module); } },
+    Store: forbidden('Store'),
+    EventBus: forbidden('EventBus'),
+    document: forbidden('DOM'),
+    console
+  });
+
+  assert.doesNotThrow(() => new vm.Script(planDaySource, { filename: 'src/plan-day.js' }).runInContext(context));
+  assert.deepEqual(registrations, []);
 });
 
 test('ładowanie Availability wyłącznie definiuje warstwę i nie rejestruje modułu', async () => {
@@ -126,6 +149,7 @@ test('świeża aplikacja uruchamia się bez nieobsłużonych błędów i migruje
     'https://personal-os.test/personal-os-v2/src/school.js',
     'https://personal-os.test/personal-os-v2/src/availability.js',
     'https://personal-os.test/personal-os-v2/src/english.js',
+    'https://personal-os.test/personal-os-v2/src/plan-day.js',
     'https://personal-os.test/personal-os-v2/src/backup.js',
     'https://personal-os.test/personal-os-v2/src/app.js',
     'https://personal-os.test/personal-os-v2/src/styles.css'

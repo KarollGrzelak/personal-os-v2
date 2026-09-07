@@ -2,9 +2,9 @@
 
 ## Overview
 
-Personal OS v2 is a single-page static browser application split across eleven production files:
+Personal OS v2 is a single-page static browser application split across twelve production files:
 
-- `index.html` contains the document structure and loads the ten local assets;
+- `index.html` contains the document structure and loads the eleven local assets;
 - `src/styles.css` contains the extracted application stylesheet;
 - `src/core.js` contains the mechanically extracted Core foundation: local and civil date handling, the pure Task v2 validator, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
 - `src/today.js` contains the mechanically extracted Today layer: DayEngine, HabitEngine, Today rendering, time budgets, PriorityEngine, and DecisionEngine;
@@ -13,10 +13,11 @@ Personal OS v2 is a single-page static browser application split across eleven p
 - `src/school.js` contains the mechanically extracted School domain: school item and lesson data rules, validation, priority and load calculations, SchoolModule, and its view;
 - `src/availability.js` contains AvailabilityEngine v1, its strict weekly/free-time and date-exception model, pure validators and normalizers, and the Availability settings card;
 - `src/english.js` contains EnglishModule MVP: strict profile and activity contracts, the manual queue and state machine, Task integration, and its escaped view;
+- `src/plan-day.js` contains the pure deterministic PlanDayEngine: safe Task projection, source isolation, energy and budget policy, Availability windows, atomic best-fit allocation, domain rotation, and closed result reasons;
 - `src/backup.js` contains the mechanically extracted Backup layer: namespace definitions and validators, untrusted-data safeguards, export, preview, staging, migrations, Replace commit, and rollback;
 - `src/app.js` contains the remaining view and UI initialization code.
 
-`src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/backup.js`, and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. The seven layers created during Step 10 retain their mechanical boundaries; English and Availability are bounded additions after that modularization. There is still no bundler, build step, or runtime package dependency.
+`src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. The seven layers created during Step 10 retain their mechanical boundaries; Availability, English, and PlanDay are bounded additions after that modularization. There is still no bundler, build step, or runtime package dependency.
 
 The system is local-first:
 
@@ -34,7 +35,7 @@ There is no backend, user account, cloud database, or automatic synchronization.
 
 ## Core
 
-The Core declarations share the document's global lexical environment with the following classic `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/backup.js`, and `src/app.js` scripts. Migration 5 contains deferred references to LessonGuide validation functions declared later in `src/learning.js`; those callbacks are not invoked while `src/core.js` loads and are available before the existing initialization code calls `runMigrations(Store)`. Migration 6 initializes only missing English namespaces, and migration 7 initializes only a missing Availability namespace. `src/core.js` is therefore the first ordered part of the application, not an independently executable package.
+The Core declarations share the document's global lexical environment with the following classic `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js` scripts. Migration 5 contains deferred references to LessonGuide validation functions declared later in `src/learning.js`; those callbacks are not invoked while `src/core.js` loads and are available before the existing initialization code calls `runMigrations(Store)`. Migration 6 initializes only missing English namespaces, and migration 7 initializes only a missing Availability namespace. `src/core.js` is therefore the first ordered part of the application, not an independently executable package.
 
 ### EventBus
 
@@ -83,10 +84,11 @@ The pure Task v2 validator accepts safe plain data objects and does not mutate o
 - `DecisionEngine` combines energy, priorities, tasks, and habits for an explicit planning date in the Today view.
 - `TrainingPlanEngine` derives the training plan from the validated training profile.
 - `RoadmapEngine` owns IT roadmap stages, criteria, reconciliation, and unlocking rules.
+- `PlanDayEngine` purely derives a plan from explicit dates, task sources, check-in energy, a manual budget, and the public Availability result.
 
 Engines communicate with modules through stable contracts and shared task records. They should not depend on a module's private storage representation.
 
-The Today declarations in `src/today.js` depend on Core declarations and share the same global lexical environment with the later `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/backup.js`, and `src/app.js`. Their references to `escapeHtml` and `escapeAttr` are deferred until rendering after `src/learning.js` has loaded. Conversely, later application code depends on `DayEngine`, `DEFAULT_HABITS`, `renderDzis`, and `renderTodayTasks`.
+The Today declarations in `src/today.js` depend on Core declarations and share the same global lexical environment with the later `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js`. Their references to `escapeHtml` and `escapeAttr` are deferred until rendering after `src/learning.js` has loaded. Conversely, later application code depends on `DayEngine`, `DEFAULT_HABITS`, `renderDzis`, and `renderTodayTasks`.
 
 The Training declarations in `src/training.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, the civil weekday helper, and `ModuleRegistry`, and on Today declarations including `DayEngine` and `renderTodayTasks`. Their reference to `escapeAttr` is deferred until rendering after `src/learning.js` has loaded. Later School, Backup, and initialization code depends on the already registered `TrainingModule`, while backup validation in `src/backup.js` uses Training declarations such as `validateProfile`.
 
@@ -98,7 +100,9 @@ The Availability declarations in `src/availability.js` depend on Core's `Store`,
 
 The English declarations in `src/english.js` depend on Core persistence, registration, calendar validation, and planning-date assertion; Today task rendering; and Learning's escaping and URL validation. Loading the layer defines strict validators and operations, then registers `EnglishModule`; it does not read or write Store, touch DOM, or emit events. English exposes at most one current open Task at integer priority `39`, plus activities completed on the explicit planning date so completion can be undone even when the profile is disabled or invalid.
 
-The Backup declarations in `src/backup.js` depend on Core's `Store`, `createMemoryStore`, `runMigrations`, `DATA_VERSION`, `EventBus`, `localDateKey`, and calendar validation; Today's `DEFAULT_HABITS`; Training's `validateProfile`; Learning's Roadmap, LessonGuide, and timestamp declarations; School's item and lesson validators; Availability's strict configuration validator; and English's strict validators. Loading the layer only initializes constants, validator maps, and Roadmap identifiers. Store access, migrations, events, DOM APIs, Blob creation, export, preview, import, commit, and rollback remain deferred until their functions are called. The final `src/app.js` uses the Backup API from its settings UI and attaches the aggregate import-completed listener during the existing synchronous initialization. All nine JavaScript files are ordered source layers sharing one global lexical environment, not independently executable modules.
+The PlanDay declarations in `src/plan-day.js` depend only on the preceding public contracts: Core's Task and civil-date helpers, Today's `TIME_BUDGETS` and `DayEngine`, `ModuleRegistry`, and AvailabilityEngine. `validateTask()` and `buildPlan()` are pure. The `getPlanForDate()` and `getPlanForToday()` facades read each public source once, do not access Store namespaces directly, and do not mutate tasks. PlanDay is not registered in ModuleRegistry, has no UI, emits no events, and is not invoked automatically during application startup. The production Today view still uses the compatibility DecisionEngine until Step 11.3B3.
+
+The Backup declarations in `src/backup.js` depend on Core's `Store`, `createMemoryStore`, `runMigrations`, `DATA_VERSION`, `EventBus`, `localDateKey`, and calendar validation; Today's `DEFAULT_HABITS`; Training's `validateProfile`; Learning's Roadmap, LessonGuide, and timestamp declarations; School's item and lesson validators; Availability's strict configuration validator; and English's strict validators. Loading the layer only initializes constants, validator maps, and Roadmap identifiers. Store access, migrations, events, DOM APIs, Blob creation, export, preview, import, commit, and rollback remain deferred until their functions are called. The final `src/app.js` uses the Backup API from its settings UI and attaches the aggregate import-completed listener during the existing synchronous initialization. All ten JavaScript files are ordered source layers sharing one global lexical environment, not independently executable modules.
 
 ## Modules
 
@@ -123,6 +127,14 @@ The English module stores a strict editable profile and an ordered queue of atom
 AvailabilityEngine stores user-declared free time, not commitments. Its weekly schedule has exactly seven canonical records keyed `0..6` as in `Date.getDay()`, while the UI presents Monday through Sunday. Intervals are half-open `[start, end)`, may touch, cannot overlap or cross midnight, and allow `24:00` only as an end. Date exceptions are unique and ordered; `unavailable` has no intervals and `custom` has one to eight. An exception replaces the whole weekly day.
 
 Calculations use local calendar dates and nominal minutes from local midnight, so `[00:00, 24:00)` is always 1440 minutes across daylight-saving changes. The engine does not infer sleep, school, events, or private commitments. Ordinary mutations use strict Store writes and emit the standard `store:change` followed by a privacy-minimal `availability:changed` discriminator payload with no date, time, minute count, or configuration. Backup import remains the only silent writer.
+
+## PlanDayEngine v2
+
+PlanDayEngine is a computed, non-persistent projection. `validateTask(task, moduleDescriptor, sourceOrder)` creates a closed safe Task record and always sources module identity from the registry descriptor. `buildPlan(input)` receives an explicit date, planning minute, approved manual budget, check-in state, public Availability result, and ordered module sources. It has no Store, DOM, EventBus, clock, network, random, or AI dependency.
+
+Planning is deterministic and phase-based: urgent tasks, scheduled tasks, one feasible flexible task per rotated active domain, then global flexible fill. All tasks, including Training, are atomic. Configured Availability produces half-open physical slots through best-fit allocation; unconfigured Availability preserves the exact manual budget and returns unscheduled records with `slot: null`. Low energy defers difficulty 4–5 without overriding urgent School work. Source failures are isolated fail-closed, and all public selection, deferral, exclusion, warning, and fatal reasons use closed codes without raw records or exception text.
+
+`getPlanForDate(date, budgetKey, planningStartMinute)` reads no clock. `getPlanForToday(budgetKey, now)` captures the supplied valid `Date` once, derives the local date and minute, and ignores seconds and milliseconds. Both facades use only `ModuleRegistry.all()`, one `getTasks(date)` call per module, `DayEngine.getRecord(date)`, `AvailabilityEngine.getAvailabilityForDate(date)`, and the existing 30/60/150-minute `TIME_BUDGETS`. The engine does not call `setTaskStatus` and does not affect the current Today UI in Step 11.3B2.
 
 ## Store namespaces
 
@@ -226,11 +238,11 @@ If commit fails, rollback continues across all namespaces even if one restoratio
 
 ## Test infrastructure
 
-The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/backup.js`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
+The repeatable test suite uses the built-in `node:test` runner and JSDOM. It always reads the real production `index.html`, `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, `src/app.js`, and `src/styles.css`; production logic is not copied into test modules.
 
 ### Loader and in-memory adapter
 
-`tests/helpers/load-app.mjs` verifies that the document contains nine classic external scripts in the exact order `./src/core.js`, `./src/today.js`, `./src/training.js`, `./src/learning.js`, `./src/school.js`, `./src/availability.js`, `./src/english.js`, `./src/backup.js`, then `./src/app.js`, plus one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact ten local resources and rejects every other resource request. It serves every domain layer unchanged and appends a small explicit test adapter only to the in-memory response for the final `src/app.js`; the adapter exposes only symbols required by the current tests and is never written to a production file.
+`tests/helpers/load-app.mjs` verifies that the document contains ten classic external scripts in the exact order `./src/core.js`, `./src/today.js`, `./src/training.js`, `./src/learning.js`, `./src/school.js`, `./src/availability.js`, `./src/english.js`, `./src/plan-day.js`, `./src/backup.js`, then `./src/app.js`, plus one external stylesheet at `./src/styles.css`. A controlled JSDOM resource loader, implemented with the version-30 `requestInterceptor` API, serves only those exact eleven local resources and rejects every other resource request. It serves every production layer, including PlanDay, unchanged and appends a small explicit test adapter only to the in-memory response for the final `src/app.js`; the adapter exposes only the PlanDayEngine symbol needed by its tests alongside the previously approved test surface and is never written to a production file.
 
 Every test or logical group receives a fresh JSDOM window and closes it after use. The loader provides deterministic isolation for:
 
@@ -247,22 +259,22 @@ The suite is divided into explicit regression layers:
 
 1. startup, script structure, Core, Store, EventBus, and MemoryStore;
 2. schema migrations and recovery behavior;
-3. module contracts, decisions, Day/Habits, Training, Learning/LessonGuide, School, Availability, and English;
+3. module contracts, decisions, Day/Habits, Training, Learning/LessonGuide, School, Availability, English, and pure PlanDay algorithms;
 4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.
 
-`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/backup.js`, and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
+`npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
 
 GitHub Actions performs a locked `npm ci` followed by `npm run check` for pushes and pull requests on Node.js 24.19.0.
 
 ### File boundary and limitations
 
-The eleven-file structure is an intentional boundary. The structural check requires the exact relative paths and order of the nine classic scripts, no inline script body or scheduling attributes, and a single external stylesheet with no `style` block. Any future approved split or module-system change must update the check and loader explicitly instead of silently testing a stale copy of the logic.
+The twelve-file structure is an intentional boundary. The structural check requires the exact relative paths and order of the ten classic scripts, no inline script body or scheduling attributes, and a single external stylesheet with no `style` block. Any future approved split or module-system change must update the check and loader explicitly instead of silently testing a stale copy of the logic.
 
 JSDOM validates DOM structure and controlled browser-API contracts, but it does not fully reproduce layout, native file pickers, browser download behavior, or every browser-specific security boundary. Those areas still require proportional verification in a real browser.
 
 ## Current constraints
 
-- Application logic remains nine ordered classic JavaScript files sharing one global lexical environment; Availability, English, Backup, and App are ordered source layers rather than independently executable modules.
+- Application logic remains ten ordered classic JavaScript files sharing one global lexical environment; Availability, English, PlanDay, Backup, and App are ordered source layers rather than independently executable modules.
 - Tests use the native Node.js runner and JSDOM rather than a browser automation framework.
 - Data remains tied to the current browser unless manually exported and imported.
 - There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.

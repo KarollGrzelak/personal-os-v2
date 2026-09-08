@@ -925,7 +925,6 @@ const TrainingModule = {
           }
           errBox.style.display = 'none';
           renderDay(dayId);
-          if (typeof renderTodayTasks === 'function') renderTodayTasks();
         });
 
         card.querySelectorAll('.edit-log').forEach(btn => {
@@ -953,7 +952,6 @@ const TrainingModule = {
             if (!confirm('Usunąć ten wpis z historii?')) return;
             this.deleteExerciseLog(exId, btn.dataset.date);
             renderDay(dayId);
-            if (typeof renderTodayTasks === 'function') renderTodayTasks();
           });
         });
       });
@@ -963,19 +961,16 @@ const TrainingModule = {
         if (finishBtn) finishBtn.addEventListener('click', () => {
           finishSession(day.id, today);
           renderDay(dayId);
-          if (typeof renderTodayTasks === 'function') renderTodayTasks();
         });
         const skipBtn = contentEl.querySelector('#skip-day');
         if (skipBtn) skipBtn.addEventListener('click', () => {
           skipSession(day.id, today);
           renderDay(dayId);
-          if (typeof renderTodayTasks === 'function') renderTodayTasks();
         });
         const undoBtn = contentEl.querySelector('#undo-day');
         if (undoBtn) undoBtn.addEventListener('click', () => {
           undoSession(day.id, today);
           renderDay(dayId);
-          if (typeof renderTodayTasks === 'function') renderTodayTasks();
         });
       }
     };

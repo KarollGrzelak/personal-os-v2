@@ -1353,7 +1353,6 @@ const LearningModule = {
             renderCriteria();
             const badge = document.querySelector(`.stage-card[data-stage="${stage.id}"] .stage-head .badge`);
             if (badge) badge.textContent = RoadmapEngine.getProgress(stage.id) + '%';
-            if (typeof renderTodayTasks === 'function') renderTodayTasks();
           });
         });
         // Panel przewodnika — czysto UI, nigdy nie dotyka getTasks/setTaskStatus
@@ -1382,7 +1381,6 @@ const LearningModule = {
             return;
           }
           renderTree(); // pełne odświeżenie — nowy etap mógł się odblokować
-          if (typeof renderTodayTasks === 'function') renderTodayTasks();
         });
       }
     };

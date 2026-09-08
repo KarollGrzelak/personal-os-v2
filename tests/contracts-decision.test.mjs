@@ -109,7 +109,7 @@ test('cztery moduły odrzucają każdą brakującą lub błędną datę przed ef
   assert.deepEqual(events, []);
 });
 
-test('widok Dziś przechwytuje jedną lokalną datę i przekazuje ją do obu kompatybilnościowych odczytów', async t => {
+test('widok Dziś przechwytuje jedną lokalną datę i przekazuje ją do pojedynczego odczytu PlanDay', async t => {
   const app = await loadApp({ fixedNow: '2026-08-20T22:30:00.000Z' });
   t.after(() => app.close());
   const dates = [];
@@ -123,7 +123,7 @@ test('widok Dziś przechwytuje jedną lokalną datę i przekazuje ją do obu kom
 
   app.document.querySelector('.time-btn[data-key="short"]').click();
 
-  assert.deepEqual(dates, ['2026-08-21', '2026-08-21']);
+  assert.deepEqual(dates, ['2026-08-21']);
 });
 
 test('walidator Task v2 akceptuje wymagane, opcjonalne i dodatkowe bezpieczne pola na granicach', async t => {

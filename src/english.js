@@ -223,7 +223,6 @@ function englishTaskFromActivity(activity) {
 function refreshEnglishViews(module) {
   const container = document.getElementById('view-' + module.id);
   if (container) module.render(container);
-  if (typeof renderTodayTasks === 'function') renderTodayTasks();
 }
 
 const EnglishModule = {

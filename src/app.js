@@ -177,6 +177,10 @@ function refreshWholeAppUI() {
   EventBus.on('backup:importCompleted', refreshWholeAppUI); // jeden zbiorczy re-render po udanym Replace
   EventBus.on('backup:importCompleted', renderAvailabilitySettings); // tylko karta Availability; panel backupu zachowuje komunikat końcowy
   EventBus.on('availability:changed', renderAvailabilitySettings);
+  EventBus.on('availability:changed', () => renderTodayTasks());
+  EventBus.on('day:checkin', () => renderDzis());
+  EventBus.on('task:status', () => renderTodayTasks());
+  EventBus.on('tasks:changed', () => renderTodayTasks());
 
   // każdy moduł renderuje się do własnego kontenera .view-<id>
   // (Core tworzy kontener dynamicznie, jeśli moduł go nie ma w HTML)
@@ -191,5 +195,6 @@ function refreshWholeAppUI() {
     mod.render(container);
   });
 
+  TodayPlanLifecycle.start();
   Router.go('dzis');
 })();

@@ -428,7 +428,7 @@ test('UI anuluje albo zatwierdza reset uszkodzonej konfiguracji bez automatyczne
   ]);
 });
 
-test('zapis Availability nie zmienia budżetu, PriorityEngine, DecisionEngine ani widoku Today', async t => {
+test('zapis Availability nie zmienia budżetu ani starszych silników, ale odświeża plan Today', async t => {
   const app = await loadApp();
   t.after(() => app.close());
   const tasks = [
@@ -458,7 +458,8 @@ test('zapis Availability nie zmienia budżetu, PriorityEngine, DecisionEngine an
   })), budgetButtonsBefore);
   assert.deepEqual(toPlain(app.api.PriorityEngine.pickWithinBudget(tasks, 60)), priorityBefore);
   assert.deepEqual(toPlain(app.api.DecisionEngine.planToday(60, '2026-08-20')), decisionBefore);
-  assert.equal(app.document.getElementById('view-dzis').innerHTML, todayBefore);
+  assert.notEqual(app.document.getElementById('view-dzis').innerHTML, todayBefore);
+  assert.match(app.document.getElementById('today-tasks').textContent, /budżet ręczny w granicach dostępności/i);
   assert.deepEqual(toPlain(app.api.ModuleRegistry.all().map(module => module.id)), moduleIdsBefore);
   assert.deepEqual(moduleIdsBefore, ['training', 'it', 'school', 'english']);
 });

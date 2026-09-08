@@ -784,12 +784,12 @@ test('buildPlan nie używa Store, DOM, EventBus, zegara ani losowości', async t
   assert.equal(app.api.PlanDayEngine.buildPlan(windowInput).ok, true);
 });
 
-test('produkcyjny Today nadal używa kompatybilnościowego DecisionEngine, nie PlanDayEngine', async t => {
+test('produkcyjny Today używa PlanDayEngine i zachowuje DecisionEngine wyłącznie jako kontrakt kompatybilnościowy', async t => {
   const app = await loadApp();
   t.after(() => app.close());
   const todaySource = await readTodaySource();
-  assert.equal(todaySource.includes('PlanDayEngine'), false);
-  assert.equal(todaySource.includes('DecisionEngine.planToday'), true);
+  assert.equal(todaySource.includes('PlanDayEngine.getPlanForToday'), true);
+  assert.equal(todaySource.includes('DecisionEngine.planToday'), false);
   assert.doesNotThrow(() => app.document.querySelector('.time-btn[data-key="short"]').click());
   assert.equal(app.document.querySelector('#today-tasks') !== null, true);
   assert.deepEqual(app.errors.window, []);

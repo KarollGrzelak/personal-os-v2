@@ -153,9 +153,9 @@ function validateLesson(raw, existingSchedule, excludeLessonId) {
    przez: (a) mechanizm priorytetów w PriorityEngine — bez zmian
    w tamtym kodzie, oraz (b) opcjonalny, generyczny kontrakt
    getDayContext(), odczytywany przez pętlę po ModuleRegistry.all()
-   w renderTodayTasks() — nigdy przez ModuleRegistry.get('school')
-   na sztywno. Ten sam wzorzec, którego DecisionEngine już używa do
-   wywołania setTaskStatus na dowolnym module. Żaden moduł nie
+   w rendererze planu Today — nigdy przez ModuleRegistry.get('school')
+   na sztywno. Ten sam publiczny wzorzec rejestru stosuje Today do
+   delegowania setTaskStatus właścicielowi. Żaden moduł nie
    importuje drugiego po nazwie.
    ============================================================ */
 const SchoolModule = {
@@ -348,7 +348,7 @@ const SchoolModule = {
 
     container.querySelectorAll('.mode-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.mode === mode);
-      btn.addEventListener('click', () => { this.setMode(btn.dataset.mode); this.render(container); if (typeof renderTodayTasks === 'function') renderTodayTasks(); });
+      btn.addEventListener('click', () => { this.setMode(btn.dataset.mode); this.render(container); });
     });
 
     const contentEl = container.querySelector('#school-content');
@@ -397,13 +397,11 @@ const SchoolModule = {
         listEl.querySelectorAll('.si-cb').forEach(cb => cb.addEventListener('change', () => {
           this.setTaskStatus(cb.dataset.id, cb.checked ? 'done' : 'todo');
           renderList();
-          if (typeof renderTodayTasks === 'function') renderTodayTasks();
         }));
         listEl.querySelectorAll('.si-del').forEach(btn => btn.addEventListener('click', () => {
           if (!confirm('Usunąć to zadanie szkolne?')) return;
           this.deleteItem(btn.dataset.id);
           renderList();
-          if (typeof renderTodayTasks === 'function') renderTodayTasks();
         }));
       };
       renderList();
@@ -423,7 +421,6 @@ const SchoolModule = {
         if (!result.ok) { errEl.style.display = 'block'; errEl.textContent = result.errors.join(' · '); return; }
         errEl.style.display = 'none';
         renderList();
-        if (typeof renderTodayTasks === 'function') renderTodayTasks();
       });
     };
 

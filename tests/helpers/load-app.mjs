@@ -41,6 +41,11 @@ const TEST_BRIDGE = `
   HabitEngine,
   PriorityEngine,
   DecisionEngine,
+  renderDzis,
+  renderTodayTasks,
+  renderTodayPlanResult,
+  delegateTodayTaskStatus,
+  TodayPlanLifecycle,
   RoadmapEngine,
   ROADMAP_STAGES,
   validateRoadmapDefinition,
@@ -409,8 +414,38 @@ export async function loadApp({
   const resourceControl = { blocked: [], requests: [] };
   const resourceLoader = createControlledResourceLoader(coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, planDaySource, backupSource, appSource, stylesSource, resourceControl);
 
-  const fixedTimestamp = new Date(fixedNow).getTime();
-  if (Number.isNaN(fixedTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);
+  let currentTimestamp = new Date(fixedNow).getTime();
+  if (Number.isNaN(currentTimestamp)) throw new Error(`Nieprawidłowy stały czas: ${fixedNow}`);
+  const clockControl = {
+    getNow() {
+      return new Date(currentTimestamp).toISOString();
+    },
+    setNow(value) {
+      const nextTimestamp = new Date(value).getTime();
+      if (Number.isNaN(nextTimestamp)) throw new Error(`Nieprawidłowy kontrolowany czas: ${value}`);
+      currentTimestamp = nextTimestamp;
+    }
+  };
+  let nextTimerId = 1;
+  const pendingTimers = new Map();
+  const timerControl = {
+    calls: [],
+    clears: [],
+    pending() {
+      return [...pendingTimers.entries()].map(([id, timer]) => ({ id, delay: timer.delay }));
+    },
+    run(id) {
+      const timer = pendingTimers.get(id);
+      if (!timer) return false;
+      pendingTimers.delete(id);
+      timer.callback(...timer.args);
+      return true;
+    },
+    runNext() {
+      const next = pendingTimers.keys().next();
+      return next.done ? false : this.run(next.value);
+    }
+  };
   let randomState = Math.floor(Number(random) * 0x100000000) >>> 0;
   if (!Number.isFinite(Number(random))) throw new Error(`Nieprawidłowe ziarno losowości: ${random}`);
 
@@ -419,13 +454,24 @@ export async function loadApp({
       const NativeDate = window.Date;
       class FixedDate extends NativeDate {
         constructor(...args) {
-          super(...(args.length ? args : [fixedTimestamp]));
+          super(...(args.length ? args : [currentTimestamp]));
         }
         static now() {
-          return fixedTimestamp;
+          return currentTimestamp;
         }
       }
       window.Date = FixedDate;
+      window.setTimeout = (callback, delay = 0, ...args) => {
+        const id = nextTimerId++;
+        const normalizedDelay = Number(delay);
+        pendingTimers.set(id, { args, callback, delay: normalizedDelay });
+        timerControl.calls.push({ delay: normalizedDelay, id });
+        return id;
+      };
+      window.clearTimeout = id => {
+        timerControl.clears.push(id);
+        pendingTimers.delete(id);
+      };
       window.Math.random = () => {
         randomState = (Math.imul(1664525, randomState) + 1013904223) >>> 0;
         return randomState / 0x100000000;
@@ -539,6 +585,7 @@ export async function loadApp({
   return {
     anchorClicks,
     api,
+    clockControl,
     dialogs,
     document: dom.window.document,
     dom,
@@ -548,8 +595,10 @@ export async function loadApp({
     fileReaderControl,
     resourceControl,
     storageControl,
+    timerControl,
     window: dom.window,
     close() {
+      api.TodayPlanLifecycle.stop();
       dom.window.close();
     }
   };

@@ -1,47 +1,204 @@
 /* ============================================================
    INICJALIZACJA UI
    ============================================================ */
+const APP_VIEW_GROUPS = Object.freeze([
+  Object.freeze({ label: 'Dzisiaj', views: Object.freeze([
+    Object.freeze({ id: 'dzis', label: 'Dziś', context: 'Twój plan i działania na dzisiaj' })
+  ]) }),
+  Object.freeze({ label: 'Obszary', views: Object.freeze([
+    Object.freeze({ id: 'it', label: 'Nauka IT', context: 'Rozwijaj umiejętności krok po kroku' }),
+    Object.freeze({ id: 'school', label: 'Szkoła', context: 'Zadania, terminy i plan lekcji' }),
+    Object.freeze({ id: 'training', label: 'Trening', context: 'Plan treningowy i postęp' }),
+    Object.freeze({ id: 'english', label: 'Angielski', context: 'Bieżąca aktywność i kolejka' })
+  ]) }),
+  Object.freeze({ label: 'System', views: Object.freeze([
+    Object.freeze({ id: 'settings', label: 'Ustawienia', context: 'Dostępność oraz bezpieczeństwo danych' })
+  ]) })
+]);
+const APP_VIEWS = Object.freeze(APP_VIEW_GROUPS.flatMap(group => group.views));
+const MOBILE_NAV_BREAKPOINT = 1024;
+let focusHeadingAfterRoute = false;
+let mobileMenuOpen = false;
+let lastMobileNavigationMode = null;
+
+function getAppView(viewId) {
+  return APP_VIEWS.find(view => view.id === viewId) || null;
+}
+
 function buildNav() {
   const nav = document.getElementById('nav');
-  const views = [
-    { id: 'dzis', label: '☀️ Dziś' },
-    { id: 'status', label: '⚙️ Status fundamentu' },
-    ...ModuleRegistry.all().map(m => ({ id: m.id, label: '🧩 ' + m.name })),
-    { id: 'settings', label: '💾 Ustawienia / Dane' },
-    { id: 'docs', label: '📄 Kontrakt Module' }
-  ];
-  nav.innerHTML = views.map(v => `<button class="navbtn" data-view="${v.id}">${v.label}</button>`).join('');
-  nav.querySelectorAll('.navbtn').forEach(btn => {
-    btn.addEventListener('click', () => Router.go(btn.dataset.view));
+  nav.replaceChildren();
+  APP_VIEW_GROUPS.forEach(group => {
+    const groupElement = document.createElement('div');
+    groupElement.className = 'nav-group';
+    const title = document.createElement('p');
+    title.className = 'nav-group-title';
+    title.textContent = group.label;
+    groupElement.appendChild(title);
+
+    group.views.forEach(view => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'navbtn';
+      button.dataset.view = view.id;
+      button.textContent = view.label;
+      button.addEventListener('click', () => navigateFromUser(view.id));
+      groupElement.appendChild(button);
+    });
+    nav.appendChild(groupElement);
   });
 }
 
-function renderStatusBadges() {
-  const el = document.getElementById('status-badges');
-  const modCount = ModuleRegistry.all().length;
-  el.innerHTML = `
-    <span class="badge ok">✓ Store aktywny</span>
-    <span class="badge ok">✓ EventBus aktywny</span>
-    <span class="badge ok">✓ Router aktywny</span>
-    <span class="badge">${modCount} zarejestrowany moduł</span>
-  `;
+function isMobileNavigationMode() {
+  return window.innerWidth < MOBILE_NAV_BREAKPOINT;
 }
 
-function initEventLog() {
-  const logEl = document.getElementById('event-log');
-  const entries = [];
-  EventBus.on('store:change', ({ key, value }) => {
-    entries.unshift(`[${new Date().toLocaleTimeString('pl-PL')}] store:change → ${key}`);
-    logEl.innerHTML = entries.slice(0, 15).map(e => `<div>${e}</div>`).join('');
-  });
-  EventBus.on('route:change', (viewId) => {
-    entries.unshift(`[${new Date().toLocaleTimeString('pl-PL')}] route:change → ${viewId}`);
-    logEl.innerHTML = entries.slice(0, 15).map(e => `<div>${e}</div>`).join('');
-  });
-  logEl.innerHTML = '<div style="color:var(--text3);">Zaloguj serię w module Trening albo zmień status zadania, żeby zobaczyć zdarzenie.</div>';
+function getNavigationElements() {
+  return {
+    backdrop: document.getElementById('nav-backdrop'),
+    closeButton: document.getElementById('menu-close'),
+    menuButton: document.getElementById('menu-open'),
+    panel: document.getElementById('app-nav-panel')
+  };
 }
 
-/* ---------- UI: Ustawienia / Dane (Krok 8) ---------- */
+function setMobileMenuOpen(nextOpen, { restoreFocus = false } = {}) {
+  const { backdrop, closeButton, menuButton, panel } = getNavigationElements();
+  if (!isMobileNavigationMode()) {
+    mobileMenuOpen = false;
+    panel.hidden = false;
+    panel.removeAttribute('inert');
+    panel.removeAttribute('aria-hidden');
+    backdrop.hidden = true;
+    menuButton.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('nav-open');
+    return;
+  }
+
+  mobileMenuOpen = nextOpen === true;
+  panel.hidden = !mobileMenuOpen;
+  panel.toggleAttribute('inert', !mobileMenuOpen);
+  panel.setAttribute('aria-hidden', mobileMenuOpen ? 'false' : 'true');
+  backdrop.hidden = !mobileMenuOpen;
+  menuButton.setAttribute('aria-expanded', mobileMenuOpen ? 'true' : 'false');
+  document.body.classList.toggle('nav-open', mobileMenuOpen);
+
+  if (mobileMenuOpen) closeButton.focus();
+  else if (restoreFocus) menuButton.focus();
+}
+
+function syncResponsiveNavigation() {
+  const { menuButton, panel } = getNavigationElements();
+  const mobileMode = isMobileNavigationMode();
+  const activeElementWasInPanel = panel.contains(document.activeElement);
+
+  if (mobileMode) {
+    if (lastMobileNavigationMode !== true) {
+      mobileMenuOpen = false;
+      panel.hidden = true;
+      panel.setAttribute('inert', '');
+      panel.setAttribute('aria-hidden', 'true');
+      document.getElementById('nav-backdrop').hidden = true;
+      menuButton.setAttribute('aria-expanded', 'false');
+      document.body.classList.remove('nav-open');
+      if (activeElementWasInPanel) menuButton.focus();
+    }
+  } else {
+    mobileMenuOpen = false;
+    panel.hidden = false;
+    panel.removeAttribute('inert');
+    panel.removeAttribute('aria-hidden');
+    document.getElementById('nav-backdrop').hidden = true;
+    menuButton.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('nav-open');
+  }
+  lastMobileNavigationMode = mobileMode;
+}
+
+function getDrawerFocusableElements() {
+  const panel = document.getElementById('app-nav-panel');
+  return [...panel.querySelectorAll('button:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])')]
+    .filter(element => !element.hidden);
+}
+
+function handleDrawerKeydown(event) {
+  if (!mobileMenuOpen || !isMobileNavigationMode()) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    setMobileMenuOpen(false, { restoreFocus: true });
+    return;
+  }
+  if (event.key !== 'Tab') return;
+
+  const focusable = getDrawerFocusableElements();
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const panel = document.getElementById('app-nav-panel');
+  if (!panel.contains(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function formatAppDate(date = new Date()) {
+  return date.toLocaleDateString('pl-PL', {
+    day: 'numeric',
+    month: 'long',
+    weekday: 'long',
+    year: 'numeric'
+  });
+}
+
+function updateShellForRoute(viewId) {
+  const view = getAppView(viewId);
+  if (!view) {
+    focusHeadingAfterRoute = false;
+    return;
+  }
+
+  const heading = document.getElementById('app-view-title');
+  document.title = `${view.label} · Personal OS`;
+  document.getElementById('app-date').textContent = formatAppDate();
+  heading.textContent = view.label;
+  document.getElementById('app-view-context').textContent = view.context;
+  document.querySelectorAll('.navbtn').forEach(button => {
+    if (button.dataset.view === viewId) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+
+  if (focusHeadingAfterRoute) heading.focus();
+  focusHeadingAfterRoute = false;
+}
+
+function navigateFromUser(viewId) {
+  if (!getAppView(viewId)) return;
+  if (mobileMenuOpen) setMobileMenuOpen(false);
+  focusHeadingAfterRoute = true;
+  Router.go(viewId);
+}
+
+function initProductShell() {
+  const { backdrop, closeButton, menuButton } = getNavigationElements();
+  const mainContent = document.getElementById('main-content');
+  const skipLink = document.querySelector('.skip-link');
+  skipLink.addEventListener('click', () => mainContent.focus());
+  menuButton.addEventListener('click', () => setMobileMenuOpen(true));
+  closeButton.addEventListener('click', () => setMobileMenuOpen(false, { restoreFocus: true }));
+  backdrop.addEventListener('click', () => setMobileMenuOpen(false, { restoreFocus: true }));
+  document.addEventListener('keydown', handleDrawerKeydown);
+  window.addEventListener('resize', syncResponsiveNavigation);
+  EventBus.on('route:change', updateShellForRoute);
+  syncResponsiveNavigation();
+}
+
+/* ---------- UI: Ustawienia / Dane ---------- */
 
 function renderSettingsView() {
   const container = document.getElementById('view-settings');
@@ -158,7 +315,6 @@ function renderImportCommitFailure(commitResult) {
 // pojedyncze store:change nie zostały wyemitowane celowo — patrz
 // Store.set({silent:true}) w commitStagedImport).
 function refreshWholeAppUI() {
-  renderStatusBadges();
   renderDzis();
   ModuleRegistry.all().forEach(mod => {
     const c = document.getElementById('view-' + mod.id);
@@ -170,8 +326,7 @@ function refreshWholeAppUI() {
 (function init() {
   runMigrations(Store); // ZAWSZE pierwsze — zanim jakikolwiek moduł/silnik odczyta dane z Store
   buildNav();
-  renderStatusBadges();
-  initEventLog();
+  initProductShell();
   renderDzis();
   renderSettingsView();
   EventBus.on('backup:importCompleted', refreshWholeAppUI); // jeden zbiorczy re-render po udanym Replace

@@ -19,7 +19,7 @@ import {
   toPlain
 } from './helpers/load-app.mjs';
 
-test('index.html wskazuje dziesięć uporządkowanych klasycznych skryptów i jeden zewnętrzny arkusz stylów', async () => {
+test('index.html zachowuje produkcyjny shell, dziesięć skryptów i jeden zewnętrzny arkusz stylów', async () => {
   const [html, coreSource, todaySource, trainingSource, learningSource, schoolSource, availabilitySource, englishSource, planDaySource, backupSource, appSource, stylesSource] = await Promise.all([
     readIndexHtml(),
     readCoreSource(),
@@ -36,6 +36,13 @@ test('index.html wskazuje dziesięć uporządkowanych klasycznych skryptów i je
   ]);
   const inspection = inspectIndexHtml(html);
 
+  assert.match(html, /<title>\s*Personal OS\s*<\/title>/);
+  assert.match(html, /<a\b[^>]*class="skip-link"[^>]*href="#main-content"/);
+  assert.match(html, /<header\b/);
+  assert.match(html, /<nav\b[^>]*aria-label="Główna nawigacja"/);
+  assert.match(html, /<main\b[^>]*id="main-content"/);
+  assert.doesNotMatch(html, /Krok 8|view-status|view-docs|status-badges|event-log/);
+  assert.doesNotMatch(html, /\sstyle\s*=|\son[a-z]+\s*=/i);
   assert.equal(inspection.scriptCount, 10);
   assert.deepEqual(inspection.scriptSources, ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/plan-day.js', './src/backup.js', './src/app.js']);
   assert.equal(inspection.scriptDetails.every(script => script.hasSource), true);
@@ -138,6 +145,8 @@ test('świeża aplikacja uruchamia się bez nieobsłużonych błędów i migruje
   assert.equal(app.window.localStorage.getItem('v2:meta:schemaVersion'), '7');
   assert.equal(app.window.localStorage.getItem('v2:availability:configuration'), 'null');
   assert.equal(app.api.Router.current(), 'dzis');
+  assert.equal(app.document.title, 'Dziś · Personal OS');
+  assert.equal(app.document.querySelectorAll('h1').length, 1);
   assert.deepEqual(toPlain(app.api.ModuleRegistry.all().map(module => module.id)), ['training', 'it', 'school', 'english']);
   assert.equal(app.document.getElementById('view-dzis').classList.contains('active'), true);
   assert.deepEqual(app.resourceControl.blocked, []);

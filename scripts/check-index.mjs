@@ -10,6 +10,7 @@ const SCRIPT_CLOSE_PATTERN = /<\/script\s*>/gi;
 const STYLE_OPEN_PATTERN = /<style\b[^>]*>/gi;
 const STYLE_CLOSE_PATTERN = /<\/style\s*>/gi;
 const LINK_PATTERN = /<link\b([^>]*)>/gi;
+const RESOURCE_TAG_PATTERN = /<(script|link|img|audio|video|source|iframe)\b([^>]*)>/gi;
 
 const EXPECTED_SCRIPT_SOURCES = ['./src/core.js', './src/today.js', './src/training.js', './src/learning.js', './src/school.js', './src/availability.js', './src/english.js', './src/plan-day.js', './src/backup.js', './src/app.js'];
 const EXPECTED_STYLESHEET_SOURCE = './src/styles.css';
@@ -56,6 +57,37 @@ async function checkIndex() {
     readFile(appPath, 'utf8'),
     readFile(stylesPath, 'utf8')
   ]);
+
+  if (!/<title>\s*Personal OS\s*<\/title>/i.test(html)) {
+    fail('bazowy tytuł dokumentu musi brzmieć dokładnie Personal OS');
+  }
+  const skipLink = html.match(/<a\b([^>]*)>\s*Przejdź do treści\s*<\/a>/i);
+  if (!skipLink
+      || !/(?:^|\s)skip-link(?:\s|$)/.test(readAttribute(skipLink[1], 'class') ?? '')
+      || readAttribute(skipLink[1], 'href') !== '#main-content') {
+    fail('dokument musi zawierać skip link „Przejdź do treści” prowadzący do #main-content');
+  }
+  if ((html.match(/<header\b/gi) ?? []).length !== 1) fail('dokument musi zawierać dokładnie jeden header');
+  if ((html.match(/<nav\b/gi) ?? []).length !== 1
+      || !/<nav\b[^>]*aria-label\s*=\s*["']Główna nawigacja["']/i.test(html)) {
+    fail('dokument musi zawierać dokładnie jedną główną nawigację z właściwą etykietą');
+  }
+  const mainContent = html.match(/<main\b([^>]*)>/i);
+  if ((html.match(/<main\b/gi) ?? []).length !== 1
+      || !mainContent
+      || readAttribute(mainContent[1], 'id') !== 'main-content') {
+    fail('dokument musi zawierać dokładnie jeden main#main-content');
+  }
+  if (readAttribute(mainContent[1], 'tabindex') !== '-1') {
+    fail('cel skip linku main#main-content musi być programowo fokusowalny przez tabindex="-1"');
+  }
+  if (/id\s*=\s*["']view-(?:status|docs)["']/i.test(html)) {
+    fail('widoki status i docs nie mogą należeć do produkcyjnego DOM');
+  }
+  if (/Krok\s*8/i.test(html)) fail('produkcyjny dokument nie może zawierać narracji Kroku 8');
+  if (/\sstyle\s*=/i.test(html)) fail('inline CSS w atrybucie style jest niedozwolony');
+  if (/\son[a-z]+\s*=/i.test(html)) fail('inline JavaScript w atrybutach zdarzeń jest niedozwolony');
+
   const scripts = [...html.matchAll(SCRIPT_PATTERN)];
   const openingTags = html.match(SCRIPT_OPEN_PATTERN) ?? [];
   const closingTags = html.match(SCRIPT_CLOSE_PATTERN) ?? [];
@@ -111,7 +143,6 @@ async function checkIndex() {
   if (styleOpenings.length !== 0 || styleClosings.length !== 0) {
     fail('CSS produkcyjny musi być zewnętrzny — bloki style są niedozwolone');
   }
-
   const stylesheetLinks = [...html.matchAll(LINK_PATTERN)].filter(match => {
     const rel = (readAttribute(match[1], 'rel') ?? '').toLowerCase().split(/\s+/);
     return rel.includes('stylesheet');
@@ -125,6 +156,17 @@ async function checkIndex() {
   const headCloseIndex = html.toLowerCase().indexOf('</head>');
   if (headCloseIndex < 0 || stylesheetLinks[0].index > headCloseIndex) {
     fail('arkusz stylów musi znajdować się w head');
+  }
+
+  const allowedResources = new Set([...EXPECTED_SCRIPT_SOURCES, EXPECTED_STYLESHEET_SOURCE]);
+  for (const resourceTag of html.matchAll(RESOURCE_TAG_PATTERN)) {
+    const reference = readAttribute(resourceTag[2], resourceTag[1].toLowerCase() === 'link' ? 'href' : 'src');
+    if (reference !== null && !allowedResources.has(reference)) {
+      fail(`niedozwolony zasób produkcyjny: ${reference}`);
+    }
+  }
+  if (/@import\b|url\s*\(/i.test(stylesSource)) {
+    fail('arkusz stylów nie może pobierać zewnętrznych zasobów');
   }
 
   if (stylesSource.length === 0) fail('src/styles.css jest pusty');
@@ -154,7 +196,7 @@ async function checkIndex() {
     fail(`błąd składni JavaScript: ${error.message}`);
   }
 
-  console.log('index.html OK: zewnętrzne src/styles.css oraz klasyczne src/core.js → src/today.js → src/training.js → src/learning.js → src/school.js → src/availability.js → src/english.js → src/plan-day.js → src/backup.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
+  console.log('index.html OK: semantyczny shell Personal OS, lokalny CSS oraz klasyczne src/core.js → src/today.js → src/training.js → src/learning.js → src/school.js → src/availability.js → src/english.js → src/plan-day.js → src/backup.js → src/app.js, kolejność, ścieżki i składnia poprawne.');
 }
 
 try {

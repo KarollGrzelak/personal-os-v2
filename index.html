@@ -3,57 +3,37 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Personal OS v2 — Krok 8</title>
+<title>Personal OS</title>
 <link rel="stylesheet" href="./src/styles.css">
 </head>
 <body>
-<div class="bgfx"></div>
-<div class="wrap">
-  <div class="kicker">Personal OS v2 · Krok 8 z 11</div>
-  <h1>Backup — eksport i import kopii zapasowej</h1>
-  <p class="sub">Moduły Szkoła i Nauka IT/LessonGuide (Kroki 6-7) pozostają aktywne bez zmian. Krok 8 dodaje bezpieczną, transakcyjną kopię zapasową całego stanu Personal OS (sekcja „Ustawienia / Dane") — eksport do pliku i import w trybie Replace z rollbackiem przy awarii.</p>
-
-  <div class="nav" id="nav"></div>
-
-  <div class="view active" id="view-dzis"></div>
-
-  <div class="view" id="view-status">
-    <div class="card">
-      <h3>Status fundamentu</h3>
-      <div id="status-badges"></div>
-      <p style="margin-top:12px;">Ten widok pokazuje, że trzy filary Core działają i się komunikują: <code>Store</code> zapisuje dane, <code>EventBus</code> roznosi informację o zmianie, <code>Router</code> przełącza widoki bez przeładowania strony.</p>
+<a class="skip-link" href="#main-content">Przejdź do treści</a>
+<div class="bgfx" aria-hidden="true"></div>
+<div class="app-shell">
+  <header class="app-header">
+    <div class="product-brand">Personal OS</div>
+    <div class="app-header-content">
+      <p class="app-date" id="app-date"></p>
+      <h1 id="app-view-title" tabindex="-1">Dziś</h1>
+      <p class="app-context" id="app-view-context">Twój plan i działania na dzisiaj</p>
     </div>
-    <div class="card">
-      <h3>Log zdarzeń EventBus (na żywo)</h3>
-      <p>Każda zmiana w zarejestrowanych modułach emituje zdarzenie. Poniżej widzisz je w czasie rzeczywistym — dowód, że moduły komunikują się przez zdarzenia, nie przez bezpośrednie wywołania.</p>
-      <div class="log" id="event-log"></div>
-    </div>
-  </div>
+    <button class="menu-button" id="menu-open" type="button" aria-expanded="false" aria-controls="app-nav-panel">Menu</button>
+  </header>
 
-  <div class="view" id="view-settings"></div>
-
-  <div class="view" id="view-docs">
-    <div class="card">
-      <h3>Kontrakt Module — wymagany</h3>
-      <p>Każdy przyszły moduł (IT, Angielski...) musi dostarczyć dokładnie te pięć elementów. Moduł Trening obok to żywy przykład pełnej implementacji — pierwszy prawdziwy moduł w aplikacji, nie tylko dowód koncepcji.</p>
-      <div class="log">
-<div>id: string</div>
-<div>name: string</div>
-<div>getTasks() → Task[]  — każde zadanie ma pole status: 'todo' | 'done' | 'skipped'</div>
-<div>getStats() → { done, total, label }</div>
-<div>render(container) → void</div>
+  <div class="app-frame">
+    <aside class="app-sidebar" id="app-nav-panel" aria-hidden="true" inert hidden>
+      <div class="app-sidebar-header">
+        <span class="app-sidebar-title">Nawigacja</span>
+        <button class="menu-close-button" id="menu-close" type="button">Zamknij menu</button>
       </div>
-    </div>
-    <div class="card">
-      <h3>Kontrakt Module — opcjonalny (dodany w Kroku 3)</h3>
-      <p>Bez tej metody moduł nadal działa i wyświetla się poprawnie — po prostu jego zadania nie będą "odhaczalne" bezpośrednio z ekranu "Dziś" (tylko z poziomu własnego widoku modułu).</p>
-      <div class="log">
-<div>setTaskStatus(taskId, status) → void</div>
-<div>  — status: 'todo' | 'done' | 'skipped'</div>
-<div>  — dwukierunkowe: DecisionEngine używa tej samej metody</div>
-<div>    do ukończenia zadania I do cofnięcia błędnego kliknięcia</div>
-      </div>
-    </div>
+      <nav class="nav" id="nav" aria-label="Główna nawigacja"></nav>
+    </aside>
+    <button class="nav-backdrop" id="nav-backdrop" type="button" aria-label="Zamknij menu" tabindex="-1" hidden></button>
+
+    <main class="wrap" id="main-content" tabindex="-1">
+      <div class="view active" id="view-dzis"></div>
+      <div class="view" id="view-settings"></div>
+    </main>
   </div>
 </div>
 

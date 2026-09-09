@@ -1,4 +1,4 @@
-# Personal OS v2
+# Personal OS
 
 Personal OS v2 is an early-stage, privacy-first personal productivity system. It combines daily planning, habits, training, school responsibilities, an IT learning roadmap, a manual English-learning queue, declared availability, and local data management in one browser application.
 
@@ -6,7 +6,7 @@ The current release is a twelve-file static bundle: `index.html` loads `src/styl
 
 ## Current status
 
-- Application milestone: Step 11.3B3 production Today integration with PlanDayEngine, awaiting independent audit
+- Application milestone: Step 11.4B1 semantic product shell and responsive navigation, pending independent audit
 - Quality infrastructure: repeatable Node-based tests and GitHub Actions are available for independent audit
 - Data schema: `DATA_VERSION = 7`
 - Backup format: `personal-os-v2-backup`, version 1
@@ -14,6 +14,7 @@ The current release is a twelve-file static bundle: `index.html` loads `src/styl
 
 ## Features
 
+- Semantic product shell with Polish route titles, grouped desktop navigation, and an accessible mobile drawer
 - Daily check-in and a production Today plan with scheduled Availability slots or an ordered unscheduled list
 - Independent habits and streak tracking
 - Training profile, plan, sessions, and exercise logs

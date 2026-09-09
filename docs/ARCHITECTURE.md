@@ -15,7 +15,7 @@ Personal OS v2 is a single-page static browser application split across twelve p
 - `src/english.js` contains EnglishModule MVP: strict profile and activity contracts, the manual queue and state machine, Task integration, and its escaped view;
 - `src/plan-day.js` contains the pure deterministic PlanDayEngine: safe Task projection, source isolation, energy and budget policy, Availability windows, atomic best-fit allocation, domain rotation, and closed result reasons;
 - `src/backup.js` contains the mechanically extracted Backup layer: namespace definitions and validators, untrusted-data safeguards, export, preview, staging, migrations, Replace commit, and rollback;
-- `src/app.js` contains the remaining view and UI initialization code.
+- `src/app.js` contains the semantic product shell, grouped navigation, responsive drawer behavior, settings view, and UI initialization code.
 
 `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js` remain classic scripts loaded synchronously and adjacently at the end of `body`, in that exact order, without `type="module"`, `async`, or `defer`. The seven layers created during Step 10 retain their mechanical boundaries; Availability, English, and PlanDay are bounded additions after that modularization. There is still no bundler, build step, or runtime package dependency.
 
@@ -74,7 +74,15 @@ The pure Task v2 validator accepts safe plain data objects and does not mutate o
 
 ### Router
 
-`Router` switches application views and reports route changes. It does not own module business rules.
+`Router` switches application views in memory and reports route changes. It does not own module business rules, write the active route to Store, create URL routes, or use the History API. The product shell observes `route:change` to update the document title, visible heading, static view context, and exactly one `aria-current="page"` marker. Only navigation initiated by the user moves focus to the new heading.
+
+## Product shell
+
+The normal interface exposes six Polish destinations in a fixed order: Dziś; Nauka IT; Szkoła; Trening; Angielski; Ustawienia. They are grouped as Dzisiaj, Obszary, and System. Availability and backup remain sections inside Ustawienia. Foundation status, the live EventBus log, Module contract demonstrations, implementation-step copy, and infrastructure badges are not part of the production DOM; removing those demonstrations does not remove their underlying contracts or tests.
+
+The document has one product heading plus semantic `header`, labelled `nav`, and `main` landmarks. At widths of at least 1024 px the navigation is a persistent sidebar. Below 1024 px it becomes a modal-style drawer controlled by Menu and Zamknij menu buttons. The drawer closes after a route choice, Escape, or backdrop activation, traps focus while open, restores focus after dismissal, prevents background scrolling, and resets safely when the viewport crosses the breakpoint. A skip link, `aria-current`, `aria-expanded`, `aria-controls`, `aria-hidden`, `hidden`, and `inert` communicate the same state to keyboard and assistive-technology users.
+
+The shell uses only static per-view context in Step 11.4B1. It never calls PlanDayEngine, reads tasks, persists navigation state, or emits domain events. Dynamic Today context remains a later presentation step.
 
 ## Shared engines
 
@@ -264,7 +272,7 @@ Every test or logical group receives a fresh JSDOM window and closes it after us
 
 The suite is divided into explicit regression layers:
 
-1. startup, script structure, Core, Store, EventBus, and MemoryStore;
+1. startup, static shell structure, Product UI navigation and drawer behavior, Core, Store, EventBus, and MemoryStore;
 2. schema migrations and recovery behavior;
 3. module contracts, compatibility decisions, Day/Habits, Training, Learning/LessonGuide, School, Availability, English, pure PlanDay algorithms, and production Today integration;
 4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.

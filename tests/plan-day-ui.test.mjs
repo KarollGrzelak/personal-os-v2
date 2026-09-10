@@ -116,8 +116,8 @@ test('Today pokazuje harmonogram, kolejność, budżety i wszystkie kolekcje wyn
   for (const expected of [
     'Plan na 2026-08-20', 'budżet ręczny w granicach dostępności', 'Pełny budżet60 min',
     'Pełna dostępność120 min', 'Pozostała dostępność120 min', 'Efektywny budżet60 min', 'Zaplanowano50 min',
-    'Pozostały budżet10 min', 'Nieprzydzielona dostępność70 min', 'Plan godzinowy',
-    'Okna planowania: 10:00–12:00', 'Pilne zadanie', 'trudność 3', 'pilne', '10:00–10:20', 'kolejność 1',
+    'Pozostały budżet10 min', 'Nieprzydzielona dostępność70 min', 'Teraz', 'Dalej',
+    'Okna planowania: 10:00–12:00', 'Pilne zadanie', '10:00–10:20', 'Kolejność 2',
     'Ukończone dzisiaj', 'Za długie zadanie', 'Ukończone wcześniej', 'Pominięte zadanie'
   ]) assert.match(text, new RegExp(expected));
   assert.equal(app.document.querySelectorAll('.today-plan-completed [data-action="undo"]').length, 1);
@@ -136,7 +136,8 @@ test('bez Availability Today pokazuje uporządkowaną listę bez sztucznych godz
   assert.equal(plan.mode, 'unscheduled');
   assert.equal(plan.selected[0].slot, null);
   assert.equal(host.querySelectorAll('.today-plan-slot').length, 0);
-  assert.match(host.textContent, /Kolejność wykonania/);
+  assert.match(host.textContent, /Teraz/);
+  assert.match(host.textContent, /bez przypisanych godzin/);
   assert.match(host.textContent, /Dostępność nie jest skonfigurowana/);
   assert.match(host.textContent, /budżet ręczny/);
 });
@@ -161,7 +162,7 @@ test('partial, fatal, pilne odroczenie oraz nieznane kody mają krótkie bezpiec
   app.api.Store.set('ui:timeBudget', 'synthetic-invalid');
   const fatal = renderAtControlledNow(app);
   assert.equal(fatal.code, 'INVALID_BUDGET');
-  assert.match(host.textContent, /Wybrany budżet czasu jest niepoprawny/);
+  assert.match(app.document.getElementById('today-tasks').textContent, /Wybrany budżet czasu jest niepoprawny/);
 
   app.api.renderTodayPlanResult({ ok: false, code: '<img src=x>', warnings: [{ code: '<svg onload=x>' }] }, host);
   assert.match(host.textContent, /Nie udało się bezpiecznie przygotować planu dnia/);
@@ -229,9 +230,8 @@ test('ukończenie i cofnięcie delegują dokładnie raz do właściciela bez bez
   let directWrites = 0;
   app.api.Store.set = (...args) => { directWrites++; return originalSet(...args); };
 
-  const checkbox = app.document.querySelector('.today-plan-selected [data-action="complete"]');
-  checkbox.checked = true;
-  checkbox.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  const completeButton = app.document.querySelector('.today-plan-selected [data-action="complete"]');
+  completeButton.click();
   assert.deepEqual(calls, [{ taskId: '\u0000owned', status: 'done' }]);
   assert.equal(status, 'done');
   assert.match(app.document.querySelector('.today-plan-completed').textContent, /Delegowane/);
@@ -264,10 +264,10 @@ test('anulowanie, no-op i błąd właściciela nie zostawiają fałszywie ukońc
   for (const nextMode of ['cancel', 'noop', 'error']) {
     mode = nextMode;
     renderAtControlledNow(app);
-    const checkbox = app.document.querySelector('[data-action="complete"]');
-    checkbox.checked = true;
-    checkbox.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-    assert.equal(checkbox.checked, false);
+    const completeButton = app.document.querySelector('[data-action="complete"]');
+    completeButton.click();
+    assert.equal(completeButton.isConnected, true);
+    assert.equal(app.document.querySelectorAll('[data-action="complete"]').length, 1);
     assert.equal(app.document.querySelector('.today-plan-action-message').textContent.includes('SYNTHETIC_PRIVATE_ERROR'), false);
   }
   assert.equal(calls.length, 3);

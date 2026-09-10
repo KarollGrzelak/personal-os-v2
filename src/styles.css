@@ -14,7 +14,7 @@
   body.nav-open{overflow:hidden;}
   [hidden]{display:none!important;}
   button,input,select,textarea{font:inherit;}
-  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
+  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,[tabindex]:focus-visible{
     outline:3px solid var(--focus);outline-offset:3px;
   }
   .skip-link{position:fixed;z-index:100;top:8px;left:8px;padding:10px 14px;border-radius:10px;background:var(--text);color:var(--bg);font-weight:700;transform:translateY(-160%);}
@@ -123,6 +123,76 @@
   .today-plan-slot{color:var(--blue);}
   .today-plan-why,.today-plan-reason,.today-plan-empty,.today-plan-action-message{font-size:11px;color:var(--text2);margin-top:5px;line-height:1.45;overflow-wrap:anywhere;}
   .today-plan-action-message:empty{display:none;}
+  .today-product-layout{display:flex;flex-direction:column;gap:16px;min-width:0;}
+  .today-product-layout>.card{margin-bottom:0;}
+  .today-product-layout h2{margin:0 0 14px;font-size:18px;line-height:1.25;letter-spacing:-.01em;}
+  .today-alerts:empty{display:none;}
+  .today-alert{padding:14px 16px;border:1px solid var(--blue-border);border-radius:14px;background:var(--blue-soft);color:var(--text2);overflow-wrap:anywhere;}
+  .today-alert+.today-alert{margin-top:10px;}
+  .today-alert strong{display:block;color:var(--text);font-size:14px;}
+  .today-alert p{margin:4px 0 0;font-size:13px;line-height:1.55;}
+  .today-alert-warning{border-color:rgba(247,199,106,.45);background:rgba(247,199,106,.1);}
+  .today-alert-error{border-color:rgba(255,133,133,.55);background:rgba(255,133,133,.1);}
+  .today-alert-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+  .today-alert .ghost,.today-alert .link-btn{min-height:44px;}
+  .today-start-list{margin:8px 0 0;padding-left:22px;}
+  .today-start-list li{padding:1px 0;}
+  .today-context-notes .banner-warn{margin:10px 0 0;}
+  .today-checkin-content>p{max-width:720px;}
+  .today-energy-summary{display:flex;align-items:center;gap:16px;margin-bottom:12px;}
+  .today-energy-advice,.today-energy-meta{margin:6px 0 0!important;}
+  .today-energy-meta{color:var(--text3)!important;}
+  .today-quality-fieldset{margin:0 0 12px;padding:0;border:0;}
+  .today-quality-fieldset legend{margin-bottom:8px;color:var(--text2);font-size:13px;}
+  .today-checkin-card input[type=number]{min-height:44px;width:120px;}
+  .today-checkin-card .qbtn{width:44px;height:44px;}
+  .today-checkin-card button{min-height:44px;}
+  .today-now-card{position:relative;padding:24px;border-color:var(--blue-border);border-radius:18px;background:linear-gradient(145deg,var(--panel2),var(--panel));box-shadow:0 18px 44px rgba(0,0,0,.18);}
+  .today-now-card h2{color:var(--blue);font-size:14px;text-transform:uppercase;letter-spacing:.1em;}
+  .today-plan-task{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.07);min-width:0;}
+  .today-plan-task:last-child{border-bottom:0;}
+  .today-plan-task.prominent{display:block;padding:0;border:0;}
+  .today-plan-task.prominent .today-plan-task-title{margin:0;font-size:clamp(22px,4vw,32px);line-height:1.18;letter-spacing:-.025em;}
+  .today-plan-task.done .today-plan-task-title{color:var(--text2);text-decoration:line-through;}
+  .today-plan-task.urgent{border-left:3px solid var(--warning,#f7c76a);padding-left:12px;}
+  .today-plan-task.prominent.urgent{padding-left:16px;}
+  .today-plan-task-meta{font-family:var(--sans);font-size:13px;color:var(--text2);}
+  .today-plan-task-meta span:not(:last-child)::after{content:' ·';color:var(--text3);}
+  .today-plan-slot{color:var(--blue)!important;font-weight:700;}
+  .today-plan-selection-reason{margin:12px 0 0;color:var(--text);font-size:15px;line-height:1.55;}
+  .today-plan-why{margin:8px 0 0;font-size:13px;}
+  .today-task-actions{display:flex;flex-wrap:wrap;gap:8px;flex-shrink:0;margin-top:12px;}
+  .today-task-actions button,.today-budget-options button{min-height:44px;padding:9px 16px;font-size:13px;}
+  .today-plan-task:not(.prominent) .today-task-actions{margin-top:0;}
+  .today-next-card .today-plan-task-body{padding-top:4px;}
+  .today-next-more{margin-top:8px;border-top:1px solid var(--border);}
+  .today-next-more>summary{display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:10px 0;cursor:pointer;color:var(--blue);font-size:13px;font-weight:700;list-style:none;}
+  .today-next-more>summary::-webkit-details-marker{display:none;}
+  .today-next-more>summary::after{content:'+';font-size:18px;line-height:1;}
+  .today-next-more[open]>summary::after{content:'−';}
+  .today-next-more-body{padding-top:2px;}
+  .today-budget-options{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+  .today-budget-summary{margin:0!important;color:var(--text2);font-size:14px!important;}
+  .today-habits-card .habit-item{min-height:52px;}
+  .today-habits-card .habit-label{flex:1;font-size:14px;overflow-wrap:anywhere;}
+  .today-habits-card .cb{width:44px;height:44px;border:0;background:transparent;}
+  .today-habits-card .cb::before{content:'';position:absolute;inset:11px;border:1.5px solid var(--border);border-radius:6px;background:var(--panel2);}
+  .today-habits-card .cb:checked{background:transparent;}
+  .today-habits-card .cb:checked::before{background:var(--blue);border-color:var(--blue);}
+  .today-habits-card .cb:checked::after{left:18px;top:14px;}
+  .today-plan-details{padding:0;overflow:hidden;}
+  .today-plan-details>summary{display:flex;align-items:center;justify-content:space-between;min-height:56px;padding:14px 20px;cursor:pointer;font-weight:750;list-style:none;}
+  .today-plan-details>summary::-webkit-details-marker{display:none;}
+  .today-plan-details>summary::after{content:'+';color:var(--blue);font-size:22px;line-height:1;}
+  .today-plan-details[open]>summary{border-bottom:1px solid var(--border);}
+  .today-plan-details[open]>summary::after{content:'−';}
+  .today-plan-details-body{padding:18px 20px 20px;}
+  .today-plan-section h3{margin:0 0 8px;color:var(--text2);font-size:14px;}
+  .today-plan-metrics{margin-top:24px;}
+  .today-all-done strong{color:var(--green);font-size:20px;}
+  .today-all-done p{margin-top:6px;}
+  .today-plan-empty{font-size:14px;line-height:1.55;}
+  .today-plan-action-message:not(:empty){padding:12px 14px;border-radius:10px;background:var(--panel2);color:var(--text);font-size:13px;}
 
   @media (max-width:1023.98px){
     .app-header{position:sticky;top:0;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;min-height:96px;padding:12px max(16px,env(safe-area-inset-right)) 12px max(16px,env(safe-area-inset-left));}
@@ -143,6 +213,13 @@
   @media (max-width:420px){
     .app-context{max-width:24ch;}
     .card{padding:16px;}
+    .today-now-card{padding:20px 16px;}
+    .today-plan-task:not(.prominent){display:block;}
+    .today-plan-task:not(.prominent) .today-task-actions{margin-top:12px;}
+    .today-task-actions button{flex:1 1 100%;}
+    .today-budget-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));}
+    .today-budget-options button{padding-inline:6px;}
+    .today-energy-summary{align-items:flex-start;}
   }
 
   @media (prefers-reduced-motion:reduce){

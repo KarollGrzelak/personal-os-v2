@@ -6,7 +6,7 @@ The current release is a twelve-file static bundle: `index.html` loads `src/styl
 
 ## Current status
 
-- Application milestone: Step 11.4B1 semantic product shell and responsive navigation, pending independent audit
+- Application milestone: Step 11.4B2 product Today view implemented, pending independent audit
 - Quality infrastructure: repeatable Node-based tests and GitHub Actions are available for independent audit
 - Data schema: `DATA_VERSION = 7`
 - Backup format: `personal-os-v2-backup`, version 1
@@ -15,7 +15,7 @@ The current release is a twelve-file static bundle: `index.html` loads `src/styl
 ## Features
 
 - Semantic product shell with Polish route titles, grouped desktop navigation, and an accessible mobile drawer
-- Daily check-in and a production Today plan with scheduled Availability slots or an ordered unscheduled list
+- Product Today hierarchy with actionable warnings, check-in or saved energy, a dominant Now task, ordered Next tasks, compact budget, habits, completed work, and progressive plan details
 - Independent habits and streak tracking
 - Training profile, plan, sessions, and exercise logs
 - IT learning roadmap with stages, criteria, and LessonGuide content
@@ -24,7 +24,8 @@ The current release is a twelve-file static bundle: `index.html` loads `src/styl
 - Weekly free-time intervals and date exceptions in AvailabilityEngine v1
 - Explicit local planning dates, integer Task priorities, planning classes, and privacy-minimal task-pool change events
 - Pure deterministic PlanDayEngine with energy, availability windows, atomic best-fit allocation, domain fairness, and closed planning reasons
-- Safe Today rendering of selected, completed, deferred, excluded, warning, partial, and fatal states with owner-delegated task status changes
+- Safe Today rendering of selected, completed, deferred, excluded, warning, partial, fatal, empty, low-energy, and all-done states with owner-delegated task status changes
+- Owner-view navigation from a planned task through the existing in-memory Router, without another task read, plan calculation, persistence write, URL route, or invented material link
 - Local-first persistence through a central Store
 - Versioned data migrations from schema 1 through 7
 - Full JSON backup export
@@ -57,7 +58,7 @@ npm run check       # validate index.html structure and run the complete test su
 
 Tests execute the real `index.html`, `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, `src/app.js`, and `src/styles.css` in an isolated JSDOM instance. A controlled resource loader serves only those eleven local assets and rejects every other resource request. The adapter used to expose selected symbols is appended only to the in-memory response for the final `src/app.js`; production files are not modified or instrumented on disk.
 
-PlanDayEngine remains pure: it does not persist plans, emit events, register as a module, or mutate tasks. The production Today view calls its `getPlanForToday` facade exactly once per plan render, uses `completedToday` from the same result, and delegates completion or undo directly to the owning module. The compatibility `DecisionEngine` remains available for existing contracts but no longer drives production Today planning. Today refreshes only after the approved budget, check-in, task-pool, Availability, backup-import, local-midnight, and changed-day foreground signals.
+PlanDayEngine remains pure: it does not persist plans, emit events, register as a module, or mutate tasks. The production Today view calls its `getPlanForToday` facade exactly once per render and uses that one result for the product hierarchy, `completedToday`, and the dynamic header context. Completion and undo delegate once to the owning module. “Open details” uses only the safe projected `moduleId` and the existing in-memory Router; it neither reads tasks again nor creates a URL or placeholder resource. The compatibility `DecisionEngine` remains available for existing contracts but no longer drives production Today planning. Today refreshes only after the approved budget, check-in, task-pool, Availability, backup-import, local-midnight, and changed-day foreground signals.
 
 All fixtures and test records are synthetic. Tests do not load exported user backups, real browser data, or network resources.
 

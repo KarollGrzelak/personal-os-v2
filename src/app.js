@@ -20,6 +20,7 @@ const MOBILE_NAV_BREAKPOINT = 1024;
 let focusHeadingAfterRoute = false;
 let mobileMenuOpen = false;
 let lastMobileNavigationMode = null;
+let todayShellContext = APP_VIEW_GROUPS[0].views[0].context;
 
 function getAppView(viewId) {
   return APP_VIEWS.find(view => view.id === viewId) || null;
@@ -156,6 +157,25 @@ function formatAppDate(date = new Date()) {
   });
 }
 
+function updateTodayShellContext(plan) {
+  if (!plan || plan.ok !== true) todayShellContext = 'Plan wymaga uwagi';
+  else if (plan.partial) todayShellContext = 'Plan częściowy';
+  else if (Array.isArray(plan.selected) && plan.selected.length) {
+    const title = typeof plan.selected[0].title === 'string' && plan.selected[0].title
+      ? plan.selected[0].title
+      : 'zadanie bez tytułu';
+    todayShellContext = `Następne: ${title}`;
+  } else if (Array.isArray(plan.completedToday) && plan.completedToday.length
+      && (!Array.isArray(plan.deferred) || plan.deferred.length === 0)) {
+    todayShellContext = 'Wszystko na dziś zrobione';
+  } else if (Array.isArray(plan.deferred) && plan.deferred.length) {
+    todayShellContext = 'Plan wymaga uwagi';
+  } else todayShellContext = 'Brak otwartych zadań na dziś';
+
+  if (Router.current() === 'dzis') document.getElementById('app-view-context').textContent = todayShellContext;
+  return todayShellContext;
+}
+
 function updateShellForRoute(viewId) {
   const view = getAppView(viewId);
   if (!view) {
@@ -182,6 +202,9 @@ function navigateFromUser(viewId) {
   if (mobileMenuOpen) setMobileMenuOpen(false);
   focusHeadingAfterRoute = true;
   Router.go(viewId);
+  if (viewId === 'dzis') queueMicrotask(() => {
+    if (Router.current() === 'dzis') document.getElementById('app-view-context').textContent = todayShellContext;
+  });
 }
 
 function initProductShell() {
@@ -327,6 +350,7 @@ function refreshWholeAppUI() {
   runMigrations(Store); // ZAWSZE pierwsze — zanim jakikolwiek moduł/silnik odczyta dane z Store
   buildNav();
   initProductShell();
+  Router.go('dzis');
   renderDzis();
   renderSettingsView();
   EventBus.on('backup:importCompleted', refreshWholeAppUI); // jeden zbiorczy re-render po udanym Replace
@@ -351,5 +375,4 @@ function refreshWholeAppUI() {
   });
 
   TodayPlanLifecycle.start();
-  Router.go('dzis');
 })();

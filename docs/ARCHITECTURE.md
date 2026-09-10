@@ -7,7 +7,7 @@ Personal OS v2 is a single-page static browser application split across twelve p
 - `index.html` contains the document structure and loads the eleven local assets;
 - `src/styles.css` contains the extracted application stylesheet;
 - `src/core.js` contains the mechanically extracted Core foundation: local and civil date handling, the pure Task v2 validator, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
-- `src/today.js` contains the mechanically extracted Today layer: DayEngine, HabitEngine, Today rendering, time budgets, PriorityEngine, and DecisionEngine;
+- `src/today.js` contains the Today layer: DayEngine, HabitEngine, the Product UI v1 Today renderer, time budgets, PriorityEngine, and DecisionEngine;
 - `src/training.js` contains the mechanically extracted Training domain: exercise data, validation, TrainingPlanEngine, session and log rules, TrainingModule, and its view;
 - `src/learning.js` contains the mechanically extracted Learning domain: Roadmap, LessonGuide, validation, escaped rendering, reconciliation, and LearningModule registration;
 - `src/school.js` contains the mechanically extracted School domain: school item and lesson data rules, validation, priority and load calculations, SchoolModule, and its view;
@@ -82,7 +82,7 @@ The normal interface exposes six Polish destinations in a fixed order: Dziś; Na
 
 The document has one product heading plus semantic `header`, labelled `nav`, and `main` landmarks. At widths of at least 1024 px the navigation is a persistent sidebar. Below 1024 px it becomes a modal-style drawer controlled by Menu and Zamknij menu buttons. The drawer closes after a route choice, Escape, or backdrop activation, traps focus while open, restores focus after dismissal, prevents background scrolling, and resets safely when the viewport crosses the breakpoint. A skip link, `aria-current`, `aria-expanded`, `aria-controls`, `aria-hidden`, `hidden`, and `inert` communicate the same state to keyboard and assistive-technology users.
 
-The shell uses only static per-view context in Step 11.4B1. It never calls PlanDayEngine, reads tasks, persists navigation state, or emits domain events. Dynamic Today context remains a later presentation step.
+The shell retains static context for domain and settings views. Today supplies a dynamic context from the same already computed PlanDay result used by its visible content: fatal and partial states, the next task title, all-done, or no-open-task state. Returning to Today reapplies the cached in-memory context without another PlanDay call, task-source read, persistence write, domain event, or URL route.
 
 ## Shared engines
 
@@ -146,7 +146,11 @@ Planning is deterministic and phase-based: urgent tasks, scheduled tasks, one fe
 
 ## Today integration
 
-Each Today plan render captures one `Date`, calls `PlanDayEngine.getPlanForToday()` once, and renders the returned selected, completed, deferred, excluded, warning, partial, or fatal state. Configured Availability produces a chronological slot view; unconfigured Availability produces an ordered list without invented times. Task titles, module names, reasons, warnings, fatal messages, and day context are inserted with text nodes rather than untrusted HTML interpolation.
+Each Today render captures one `Date`, calls `PlanDayEngine.getPlanForToday()` once, and uses that result for both the header context and all plan content. The visible order is actionable warnings; check-in or compact saved energy; the dominant Now card; ordered Next tasks; compact 30/60/150-minute budget and planned-minute summary; habits; completed-today tasks; then a native `details` disclosure containing deferred and excluded work, full warnings, windows, and engine metrics. Fatal, partial, first-run, missing check-in, missing Availability, empty, low-energy, all-done, scheduled, and unscheduled states remain explicit and user-facing.
+
+Configured Availability exposes a time range only when PlanDay returned a scheduled slot. Unconfigured Availability produces an ordered view with durations but no invented hours. Task titles, module names, objectives, warnings, reasons, contexts, and saved values are inserted with text nodes. The Today layer creates no material or resource link because Task v2 has no shared material contract.
+
+Completion and undo are button actions delegated exactly once through `ModuleRegistry` to the projected task owner. A pending in-memory focus target moves focus to the corresponding control after the synchronous status event rerenders Today. “Open details” is available only when the projected `moduleId` has both a registered owner and one of the existing product views. It passes that `moduleId` to the existing in-memory navigation path and never calls `getTasks`, PlanDay, Store, History API, or a URL constructor.
 
 The plan refreshes once after a manual budget change, successful check-in, `task:status`, `tasks:changed`, `availability:changed`, successful aggregate backup import, or a detected local-day transition. Domain views no longer call the Today renderer beside those events. A single timeout targets the next local midnight and schedules its successor after firing. `visibilitychange` acts only when the document becomes visible and the local date differs from the last rendered plan date; there is no interval or per-second polling.
 
@@ -274,7 +278,7 @@ The suite is divided into explicit regression layers:
 
 1. startup, static shell structure, Product UI navigation and drawer behavior, Core, Store, EventBus, and MemoryStore;
 2. schema migrations and recovery behavior;
-3. module contracts, compatibility decisions, Day/Habits, Training, Learning/LessonGuide, School, Availability, English, pure PlanDay algorithms, and production Today integration;
+3. module contracts, compatibility decisions, Day/Habits, Training, Learning/LessonGuide, School, Availability, English, pure PlanDay algorithms, production Today integration, and all Product UI Today states;
 4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.
 
 `npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
@@ -293,5 +297,6 @@ JSDOM validates DOM structure and controlled browser-API contracts, but it does 
 - Tests use the native Node.js runner and JSDOM rather than a browser automation framework.
 - Data remains tied to the current browser unless manually exported and imported.
 - There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.
+- Product UI v1 is complete through Step 11.4B2 only; domain views, settings, and final cross-view accessibility remain bounded later steps.
 
 Architectural changes, schema changes, and new modules require a separate bounded step, migration analysis where applicable, regression tests, and independent review before commit.

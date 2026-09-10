@@ -130,105 +130,11 @@ const HabitEngine = (() => {
    PriorityEngine/DecisionEngine.
    ============================================================ */
 let todayPlanLastRenderedDate = null;
+let todayPendingFocus = null;
+const TODAY_NEXT_VISIBLE_LIMIT = 4;
 
 function renderDzis(now = new Date()) {
-  const container = document.getElementById('view-dzis');
-  const date = localDateKey(now);
-  const record = DayEngine.getRecord(date);
-  const savedBudgetKey = Store.get('ui:timeBudget', 'normal');
-
-  container.innerHTML = `
-    <div class="card">
-      <h3>😴 Poranny check-in</h3>
-      ${record ? `
-        <div class="energy-ring">
-          <div class="energy-num" style="color:var(--blue);">${record.energyScore}</div>
-          <div>
-            <div class="badge ${record.energyScore >= 75 ? 'ok' : record.energyScore >= 50 ? '' : 'warn'}">${DayEngine.advice(record.energyScore).level} energia</div>
-            <p style="margin:8px 0 0;max-width:420px;">${DayEngine.advice(record.energyScore).text}</p>
-          </div>
-        </div>
-        <button class="ghost" style="margin-top:12px;" id="edit-checkin">zmień check-in</button>
-      ` : `
-        <p>Ile spałeś dziś w nocy i jak oceniasz jakość snu?</p>
-        <div class="field-row">
-          <label>Godziny snu</label>
-          <input type="number" id="sleep-hours" min="0" max="14" step="0.5" placeholder="np. 7.5" style="width:100px;">
-        </div>
-        <div class="field-row">
-          <label>Jakość (1-5)</label>
-          <div class="quality-btns" id="quality-btns">
-            ${[1,2,3,4,5].map(n => `<button class="qbtn" data-q="${n}">${n}</button>`).join('')}
-          </div>
-        </div>
-        <button class="primary" id="save-checkin" style="margin-top:6px;">Zapisz check-in</button>
-      `}
-    </div>
-
-    <div class="card">
-      <h3>⏱️ Ile masz dziś czasu?</h3>
-      <div class="field-row" id="time-budget-row">
-        ${TIME_BUDGETS.map(b => `<button class="ghost time-btn" data-key="${b.key}">${b.label}</button>`).join('')}
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>✅ Twoje zadania na dziś</h3>
-      <div id="day-context-notes"></div>
-      <div id="today-tasks"></div>
-    </div>
-
-    <div class="card">
-      <h3>🎯 Nawyki dnia</h3>
-      <p>Niezależne od sezonów — jeden urwany nawyk nie zeruje pozostałych. Streak liczony osobno dla każdego.</p>
-      <div id="habit-list"></div>
-    </div>
-  `;
-
-  // --- check-in snu ---
-  let selectedQuality = 0;
-  if (!record) {
-    const qBtns = container.querySelectorAll('.qbtn');
-    qBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        selectedQuality = parseInt(btn.dataset.q);
-        qBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-    });
-    container.querySelector('#save-checkin').addEventListener('click', () => {
-      const hours = parseFloat(document.getElementById('sleep-hours').value);
-      if (!hours || isNaN(hours) || !selectedQuality) {
-        alert('Podaj godziny snu i wybierz jakość (1-5).');
-        return;
-      }
-      DayEngine.checkIn(hours, selectedQuality);
-    });
-  } else {
-    container.querySelector('#edit-checkin').addEventListener('click', () => {
-      const recs = Store.get('dayRecords', {});
-      delete recs[date];
-      Store.set('dayRecords', recs);
-      renderDzis();
-    });
-  }
-
-  // --- wybór budżetu czasu ---
-  const timeBtns = container.querySelectorAll('.time-btn');
-  function markActiveBudget(key) {
-    timeBtns.forEach(b => b.classList.toggle('active', b.dataset.key === key));
-  }
-  timeBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      Store.set('ui:timeBudget', btn.dataset.key);
-      markActiveBudget(btn.dataset.key);
-      renderTodayTasks();
-    });
-  });
-  markActiveBudget(savedBudgetKey);
-
-  renderTodayTasks(now);
-  renderHabitList();
+  return renderTodayTasks(now);
 }
 
 function clearTodayNode(node) {
@@ -243,6 +149,8 @@ function createTodayNode(tag, className = '', text = null) {
 }
 
 const todayTaskActionTargets = new WeakMap();
+const todayDetailsActionTargets = new WeakMap();
+const todayHabitTargets = new WeakMap();
 
 function todayBudgetSourceLabel(source) {
   if (source === 'manual') return 'budżet ręczny';
@@ -256,6 +164,16 @@ function todayPlanningClassLabel(planningClass) {
   if (planningClass === 'scheduled') return 'zaplanowane';
   if (planningClass === 'flexible') return 'elastyczne';
   return 'status planistyczny niedostępny';
+}
+
+function todaySelectionReason(reason) {
+  const messages = {
+    URGENT_PHASE: 'To zadanie jest pilne i ma pierwszeństwo.',
+    SCHEDULED_PHASE: 'To zaplanowana aktywność na dziś.',
+    DOMAIN_FAIRNESS_PHASE: 'Ten krok utrzymuje równowagę między ważnymi obszarami.',
+    GLOBAL_FILL_PHASE: 'To najlepszy kolejny krok, który mieści się w pozostałym czasie.'
+  };
+  return messages[reason] || 'To zadanie jest następnym wykonalnym krokiem w dzisiejszym planie.';
 }
 
 function todayDeferredMessage(reason) {
@@ -299,44 +217,60 @@ function todayExcludedMessage(reason) {
   return 'Zadanie zostało bezpiecznie wykluczone.';
 }
 
-function appendTodayTaskSummary(parent, task, options = {}) {
-  const row = createTodayNode('div', `today-plan-task item${options.done ? ' done' : ''}${task.planningClass === 'urgent' ? ' urgent' : ''}`);
-  if (options.action === 'complete') {
-    const checkbox = createTodayNode('input', 'cb');
-    checkbox.type = 'checkbox';
-    checkbox.dataset.module = task.moduleId;
-    checkbox.dataset.task = task.taskId;
-    checkbox.dataset.action = 'complete';
-    checkbox.setAttribute('aria-label', `Ukończ: ${task.title}`);
-    todayTaskActionTargets.set(checkbox, { moduleId: task.moduleId, taskId: task.taskId });
-    row.appendChild(checkbox);
-  }
+function canOpenTodayTaskDetails(moduleId) {
+  if (typeof moduleId !== 'string' || !moduleId) return false;
+  const owner = ModuleRegistry.get(moduleId);
+  const view = typeof getAppView === 'function' ? getAppView(moduleId) : null;
+  return !!(owner && view);
+}
 
-  const body = createTodayNode('div', 'today-plan-task-body');
-  body.appendChild(createTodayNode('div', 'today-plan-task-title', task.title || 'Zadanie bez tytułu'));
-  const meta = createTodayNode('div', 'today-plan-task-meta');
-  meta.appendChild(createTodayNode('span', '', task.moduleName || task.moduleId || 'Nieznana domena'));
-  if (Number.isInteger(task.estimatedMinutes)) meta.appendChild(createTodayNode('span', '', `${task.estimatedMinutes} min`));
-  if (Number.isInteger(task.difficulty)) meta.appendChild(createTodayNode('span', '', `trudność ${task.difficulty}`));
-  if (task.planningClass) meta.appendChild(createTodayNode('span', '', todayPlanningClassLabel(task.planningClass)));
-  if (task.slot && typeof task.slot.start === 'string' && typeof task.slot.end === 'string') {
-    meta.appendChild(createTodayNode('span', 'today-plan-slot', `${task.slot.start}–${task.slot.end}`));
-  }
-  if (Number.isInteger(task.executionOrder)) meta.appendChild(createTodayNode('span', '', `kolejność ${task.executionOrder}`));
-  body.appendChild(meta);
-  if (typeof task.why === 'string' && task.why) body.appendChild(createTodayNode('div', 'today-plan-why', task.why));
-  if (options.message) body.appendChild(createTodayNode('div', 'today-plan-reason', options.message));
-  row.appendChild(body);
-
-  if (options.action === 'undo') {
-    const button = createTodayNode('button', 'ghost', 'cofnij');
+function appendTodayTaskActions(parent, task, action) {
+  const actions = createTodayNode('div', 'today-task-actions');
+  if (action === 'complete' || action === 'undo') {
+    const label = action === 'complete' ? 'Ukończ' : 'Cofnij ukończenie';
+    const button = createTodayNode('button', action === 'complete' ? 'primary' : 'ghost', label);
     button.type = 'button';
     button.dataset.module = task.moduleId;
     button.dataset.task = task.taskId;
-    button.dataset.action = 'undo';
+    button.dataset.action = action;
+    button.setAttribute('aria-label', `${label}: ${task.title}`);
     todayTaskActionTargets.set(button, { moduleId: task.moduleId, taskId: task.taskId });
-    row.appendChild(button);
+    actions.appendChild(button);
   }
+  if (action === 'complete' && canOpenTodayTaskDetails(task.moduleId)) {
+    const detailsButton = createTodayNode('button', 'ghost', 'Otwórz szczegóły');
+    detailsButton.type = 'button';
+    detailsButton.dataset.action = 'open-details';
+    detailsButton.setAttribute('aria-label', `Otwórz szczegóły w obszarze ${task.moduleName || task.moduleId}`);
+    todayDetailsActionTargets.set(detailsButton, { moduleId: task.moduleId });
+    actions.appendChild(detailsButton);
+  }
+  if (actions.childElementCount) parent.appendChild(actions);
+}
+
+function appendTodayTaskSummary(parent, task, options = {}) {
+  const row = createTodayNode('article', `today-plan-task${options.done ? ' done' : ''}${task.planningClass === 'urgent' ? ' urgent' : ''}${options.prominent ? ' prominent' : ''}`);
+  const body = createTodayNode('div', 'today-plan-task-body');
+  body.appendChild(createTodayNode(options.prominent ? 'h3' : 'div', 'today-plan-task-title', task.title || 'Zadanie bez tytułu'));
+  const meta = createTodayNode('div', 'today-plan-task-meta');
+  meta.appendChild(createTodayNode('span', '', task.moduleName || task.moduleId || 'Nieznana domena'));
+  if (Number.isInteger(task.estimatedMinutes)) meta.appendChild(createTodayNode('span', '', `${task.estimatedMinutes} min`));
+  if (options.showPlanningClass && task.planningClass) meta.appendChild(createTodayNode('span', '', todayPlanningClassLabel(task.planningClass)));
+  if (options.scheduled && task.slot && typeof task.slot.start === 'string' && typeof task.slot.end === 'string') {
+    meta.appendChild(createTodayNode('span', 'today-plan-slot', `${task.slot.start}–${task.slot.end}`));
+  }
+  if (options.showOrder && Number.isInteger(task.executionOrder)) meta.appendChild(createTodayNode('span', '', `Kolejność ${task.executionOrder}`));
+  body.appendChild(meta);
+  if (options.selectionReason) body.appendChild(createTodayNode('p', 'today-plan-selection-reason', todaySelectionReason(task.selectionReason)));
+  if (typeof task.why === 'string' && task.why) {
+    const why = createTodayNode('p', 'today-plan-why');
+    why.appendChild(createTodayNode('strong', '', 'Cel: '));
+    why.appendChild(document.createTextNode(task.why));
+    body.appendChild(why);
+  }
+  if (options.message) body.appendChild(createTodayNode('div', 'today-plan-reason', options.message));
+  row.appendChild(body);
+  appendTodayTaskActions(row, task, options.action);
   parent.appendChild(row);
 }
 
@@ -366,118 +300,269 @@ function delegateTodayTaskStatus(moduleId, taskId, status) {
 function renderTodayPlanResult(plan, container) {
   if (!container) return;
   clearTodayNode(container);
+  const layout = container.id === 'today-tasks' ? container : createTodayNode('div', 'today-product-layout');
+  if (container.id !== 'today-tasks') {
+    layout.id = 'today-tasks';
+    container.appendChild(layout);
+  } else layout.className = 'today-product-layout';
 
-  if (!plan || plan.ok !== true) {
-    const fatal = createTodayNode('div', 'banner-warn today-plan-fatal');
-    fatal.appendChild(createTodayNode('b', '', 'Nie można zbudować planu. '));
-    fatal.appendChild(document.createTextNode(todayFatalMessage(plan && plan.code)));
-    container.appendChild(fatal);
-    const warnings = Array.isArray(plan && plan.warnings) ? plan.warnings : [];
-    warnings.forEach(warning => container.appendChild(createTodayNode('div', 'banner-warn', todayWarningMessage(warning && warning.code))));
-    return;
-  }
+  const warnings = Array.isArray(plan && plan.warnings) ? plan.warnings : [];
+  const selected = Array.isArray(plan && plan.selected) ? plan.selected : [];
+  const completed = Array.isArray(plan && plan.completedToday) ? plan.completedToday : [];
+  const deferred = Array.isArray(plan && plan.deferred) ? plan.deferred : [];
+  const excluded = Array.isArray(plan && plan.excluded) ? plan.excluded : [];
+  const isSuccess = plan && plan.ok === true;
 
-  container.appendChild(createTodayNode('div', 'today-plan-date', `Plan na ${plan.date}`));
-  if (plan.partial) container.appendChild(createTodayNode('div', 'banner-warn today-plan-partial', 'Plan jest częściowy — co najmniej jedno źródło zadań zostało pominięte.'));
-
-  const summary = createTodayNode('div', 'today-plan-summary');
-  const budget = plan.budget || {};
-  const totals = plan.totals || {};
-  const values = [
-    ['Źródło budżetu', todayBudgetSourceLabel(budget.source)],
-    ['Pełny budżet', Number.isInteger(budget.manualBudgetMinutes) ? `${budget.manualBudgetMinutes} min` : 'niedostępny'],
-    ['Pełna dostępność', Number.isInteger(budget.availableMinutes) ? `${budget.availableMinutes} min` : 'brak konfiguracji'],
-    ['Pozostała dostępność', Number.isInteger(budget.remainingAvailableMinutes) ? `${budget.remainingAvailableMinutes} min` : 'brak konfiguracji'],
-    ['Efektywny budżet', Number.isInteger(budget.effectiveBudgetMinutes) ? `${budget.effectiveBudgetMinutes} min` : 'niedostępny'],
-    ['Zaplanowano', Number.isInteger(totals.plannedMinutes) ? `${totals.plannedMinutes} min` : 'niedostępne'],
-    ['Pozostały budżet', Number.isInteger(totals.unusedEffectiveMinutes) ? `${totals.unusedEffectiveMinutes} min` : 'niedostępny'],
-    ['Nieprzydzielona dostępność', Number.isInteger(totals.uncommittedAvailabilityMinutes) ? `${totals.uncommittedAvailabilityMinutes} min` : 'brak konfiguracji']
-  ];
-  values.forEach(([label, value]) => {
-    const item = createTodayNode('div', 'today-plan-summary-item');
-    item.appendChild(createTodayNode('span', 'today-plan-summary-label', label));
-    item.appendChild(createTodayNode('strong', '', value));
-    summary.appendChild(item);
-  });
-  container.appendChild(summary);
-
-  const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
-  if (warnings.length) {
-    const section = createTodayNode('section', 'today-plan-section today-plan-warnings');
-    section.appendChild(createTodayNode('h4', '', 'Ważne informacje'));
-    warnings.forEach(warning => section.appendChild(createTodayNode('div', 'banner-warn', todayWarningMessage(warning && warning.code))));
-    container.appendChild(section);
-  }
-
-  const selected = Array.isArray(plan.selected) ? plan.selected : [];
-  const selectedSection = createTodayNode('section', 'today-plan-section today-plan-selected');
-  selectedSection.appendChild(createTodayNode('h4', '', plan.mode === 'scheduled' ? 'Plan godzinowy' : 'Kolejność wykonania'));
-  if (plan.mode === 'scheduled' && Array.isArray(plan.planningWindows)) {
-    const windows = plan.planningWindows
-      .filter(interval => interval && typeof interval.start === 'string' && typeof interval.end === 'string')
-      .map(interval => `${interval.start}–${interval.end}`);
-    selectedSection.appendChild(createTodayNode('div', 'today-plan-windows', windows.length
-      ? `Okna planowania: ${windows.join(', ')}`
-      : 'Brak okien planowania.'));
-  }
-  if (!selected.length) selectedSection.appendChild(createTodayNode('p', 'today-plan-empty', 'Brak zadań do zaplanowania w bieżących ograniczeniach.'));
-  selected.forEach(task => appendTodayTaskSummary(selectedSection, task, { action: 'complete' }));
-  container.appendChild(selectedSection);
-
-  const completed = Array.isArray(plan.completedToday) ? plan.completedToday : [];
-  if (completed.length) {
-    const section = createTodayNode('section', 'today-plan-section today-plan-completed');
-    section.appendChild(createTodayNode('h4', '', 'Ukończone dziś'));
-    completed.forEach(task => appendTodayTaskSummary(section, task, { action: 'undo', done: true }));
-    container.appendChild(section);
-  }
-
-  const deferred = Array.isArray(plan.deferred) ? plan.deferred : [];
-  if (deferred.length) {
-    const section = createTodayNode('section', 'today-plan-section today-plan-deferred');
-    section.appendChild(createTodayNode('h4', '', 'Odłożone'));
-    deferred.forEach(task => appendTodayTaskSummary(section, task, { message: todayDeferredMessage(task.reason) }));
-    container.appendChild(section);
-  }
-
-  const excluded = Array.isArray(plan.excluded) ? plan.excluded : [];
-  if (excluded.length) {
-    const section = createTodayNode('section', 'today-plan-section today-plan-excluded');
-    section.appendChild(createTodayNode('h4', '', 'Poza planem'));
-    excluded.forEach(task => {
-      if (typeof task.title === 'string') appendTodayTaskSummary(section, task, { message: todayExcludedMessage(task.reason), done: task.reason === 'STATUS_DONE' });
-      else section.appendChild(createTodayNode('div', 'today-plan-reason', todayExcludedMessage(task.reason)));
+  const alerts = createTodayNode('section', 'today-alerts');
+  alerts.id = 'today-action-alerts';
+  alerts.setAttribute('aria-label', 'Ważne informacje na dziś');
+  alerts.setAttribute('aria-live', 'polite');
+  if (!isSuccess) {
+    const fatal = createTodayNode('div', 'today-alert today-alert-error today-plan-fatal');
+    fatal.setAttribute('role', 'alert');
+    fatal.appendChild(createTodayNode('strong', '', 'Plan wymaga uwagi.'));
+    fatal.appendChild(createTodayNode('p', '', todayFatalMessage(plan && plan.code)));
+    const actions = createTodayNode('div', 'today-alert-actions');
+    const retry = createTodayNode('button', 'ghost', 'Spróbuj ponownie');
+    retry.type = 'button';
+    retry.dataset.todayRetry = 'true';
+    actions.appendChild(retry);
+    if (plan && plan.code === 'INVALID_AVAILABILITY') {
+      const settings = createTodayNode('button', 'ghost', 'Przejdź do ustawień');
+      settings.type = 'button';
+      settings.dataset.todayRoute = 'settings';
+      actions.appendChild(settings);
+    } else if (plan && plan.code === 'INVALID_BUDGET') {
+      const budgetAction = createTodayNode('button', 'ghost', 'Wybierz budżet');
+      budgetAction.type = 'button';
+      budgetAction.dataset.todayFocus = 'today-budget';
+      actions.appendChild(budgetAction);
+    }
+    fatal.appendChild(actions);
+    alerts.appendChild(fatal);
+  } else {
+    if (plan.partial) {
+      const partial = createTodayNode('div', 'today-alert today-alert-warning today-plan-partial');
+      partial.setAttribute('role', 'status');
+      partial.appendChild(createTodayNode('strong', '', 'Plan jest częściowy.'));
+      partial.appendChild(createTodayNode('p', '', 'Możesz wykonać widoczną część planu. Co najmniej jedno źródło zadań wymaga sprawdzenia.'));
+      alerts.appendChild(partial);
+    }
+    if (plan.energy && plan.energy.state === 'low') {
+      const lowEnergy = createTodayNode('div', 'today-alert today-alert-warning today-low-energy');
+      lowEnergy.appendChild(createTodayNode('strong', '', 'Dziś warto działać łagodniej.'));
+      lowEnergy.appendChild(createTodayNode('p', '', 'Niska energia ograniczyła trudniejsze zadania. To informacja do dopasowania tempa, nie ocena Twojego dnia.'));
+      alerts.appendChild(lowEnergy);
+    }
+    warnings.forEach(warning => {
+      const warningCode = warning && warning.code;
+      const warningElement = createTodayNode('div', 'today-alert today-alert-warning');
+      warningElement.appendChild(createTodayNode('p', '', todayWarningMessage(warningCode)));
+      if (warningCode === 'CHECK_IN_MISSING') {
+        const action = createTodayNode('button', 'ghost', 'Uzupełnij check-in');
+        action.type = 'button';
+        action.dataset.todayFocus = 'today-checkin';
+        warningElement.appendChild(action);
+      }
+      if (warningCode === 'AVAILABILITY_NOT_CONFIGURED') {
+        const action = createTodayNode('button', 'ghost', 'Ustaw dostępność');
+        action.type = 'button';
+        action.dataset.todayRoute = 'settings';
+        warningElement.appendChild(action);
+      }
+      alerts.appendChild(warningElement);
     });
-    container.appendChild(section);
+    if (plan.energy && plan.energy.checkInCompleted === false && plan.availability && plan.availability.configured === false) {
+      const guide = createTodayNode('div', 'today-alert today-start-guide');
+      guide.appendChild(createTodayNode('strong', '', 'Dobry początek to trzy krótkie kroki:'));
+      const list = createTodayNode('ol', 'today-start-list');
+      [['Uzupełnij check-in', 'today-checkin'], ['Wybierz budżet', 'today-budget']].forEach(([label, target]) => {
+        const item = createTodayNode('li');
+        const action = createTodayNode('button', 'link-btn', label);
+        action.type = 'button';
+        action.dataset.todayFocus = target;
+        item.appendChild(action);
+        list.appendChild(item);
+      });
+      const item = createTodayNode('li');
+      const settings = createTodayNode('button', 'link-btn', 'Skonfiguruj dostępność');
+      settings.type = 'button';
+      settings.dataset.todayRoute = 'settings';
+      item.appendChild(settings);
+      list.appendChild(item);
+      guide.appendChild(list);
+      alerts.appendChild(guide);
+    }
   }
+  const contexts = createTodayNode('div', 'today-context-notes');
+  contexts.id = 'day-context-notes';
+  alerts.appendChild(contexts);
+  layout.appendChild(alerts);
+
+  const checkIn = createTodayNode('section', 'card today-checkin-card');
+  checkIn.id = 'today-checkin';
+  checkIn.tabIndex = -1;
+  checkIn.appendChild(createTodayNode('h2', '', 'Check-in i energia'));
+  const checkInContent = createTodayNode('div', 'today-checkin-content');
+  checkInContent.id = 'today-checkin-content';
+  checkIn.appendChild(checkInContent);
+  layout.appendChild(checkIn);
+
+  const nowSection = createTodayNode('section', 'card today-now-card today-plan-selected');
+  nowSection.appendChild(createTodayNode('h2', '', 'Teraz'));
+  if (!isSuccess) {
+    nowSection.appendChild(createTodayNode('p', 'today-plan-empty', 'Najpierw popraw dane planu albo spróbuj ponownie.'));
+  } else if (selected.length) {
+    appendTodayTaskSummary(nowSection, selected[0], {
+      action: 'complete',
+      prominent: true,
+      scheduled: plan.mode === 'scheduled',
+      selectionReason: true
+    });
+  } else if (completed.length && deferred.length === 0) {
+    const success = createTodayNode('div', 'today-all-done');
+    success.appendChild(createTodayNode('strong', '', 'Wszystko na dziś zrobione.'));
+    success.appendChild(createTodayNode('p', '', 'Dobra robota — ukończone zadania znajdziesz niżej.'));
+    nowSection.appendChild(success);
+  } else if (deferred.length) {
+    nowSection.appendChild(createTodayNode('p', 'today-plan-empty', 'W bieżącej energii, dostępności lub budżecie nie ma zadania, które można bezpiecznie rozpocząć.'));
+  } else {
+    nowSection.appendChild(createTodayNode('p', 'today-plan-empty', 'Brak otwartych zadań na dziś. Możesz spokojnie skupić się na nawykach albo odpoczynku.'));
+  }
+  layout.appendChild(nowSection);
+
+  const nextSection = createTodayNode('section', 'card today-next-card today-plan-selected');
+  nextSection.appendChild(createTodayNode('h2', '', 'Dalej'));
+  if (isSuccess && selected.length > 1) {
+    const nextTasks = selected.slice(1);
+    nextTasks.slice(0, TODAY_NEXT_VISIBLE_LIMIT).forEach(task => appendTodayTaskSummary(nextSection, task, {
+      action: 'complete',
+      scheduled: plan.mode === 'scheduled',
+      showOrder: true
+    }));
+    const hiddenNextTasks = nextTasks.slice(TODAY_NEXT_VISIBLE_LIMIT);
+    if (hiddenNextTasks.length) {
+      const more = createTodayNode('details', 'today-next-more');
+      more.appendChild(createTodayNode('summary', '', `Pozostałe zadania (${hiddenNextTasks.length})`));
+      const moreBody = createTodayNode('div', 'today-next-more-body');
+      hiddenNextTasks.forEach(task => appendTodayTaskSummary(moreBody, task, {
+        action: 'complete',
+        scheduled: plan.mode === 'scheduled',
+        showOrder: true
+      }));
+      more.appendChild(moreBody);
+      nextSection.appendChild(more);
+    }
+  } else {
+    nextSection.appendChild(createTodayNode('p', 'today-plan-empty', selected.length === 1
+      ? 'To jedyne zadanie w bieżącym planie.'
+      : 'Brak kolejnych zadań w bieżącym planie.'));
+  }
+  layout.appendChild(nextSection);
+
+  const budgetSection = createTodayNode('section', 'card today-budget-card');
+  budgetSection.id = 'today-budget';
+  budgetSection.tabIndex = -1;
+  budgetSection.appendChild(createTodayNode('h2', '', 'Budżet dnia'));
+  const budgetButtons = createTodayNode('div', 'today-budget-options');
+  budgetButtons.setAttribute('aria-label', 'Ręczny budżet czasu');
+  const activeBudgetKey = isSuccess && plan.budget ? plan.budget.manualBudgetKey : null;
+  TIME_BUDGETS.forEach(budget => {
+    const button = createTodayNode('button', 'ghost time-btn', `${budget.minutes} min`);
+    button.type = 'button';
+    button.dataset.key = budget.key;
+    button.classList.toggle('active', budget.key === activeBudgetKey);
+    button.setAttribute('aria-pressed', budget.key === activeBudgetKey ? 'true' : 'false');
+    budgetButtons.appendChild(button);
+  });
+  budgetSection.appendChild(budgetButtons);
+  const totals = isSuccess && plan.totals ? plan.totals : {};
+  const budget = isSuccess && plan.budget ? plan.budget : {};
+  budgetSection.appendChild(createTodayNode('p', 'today-budget-summary', Number.isInteger(totals.plannedMinutes) && Number.isInteger(budget.effectiveBudgetMinutes)
+    ? `Zaplanowano ${totals.plannedMinutes} z ${budget.effectiveBudgetMinutes} min dostępnego budżetu.`
+    : 'Wybierz poprawny budżet, aby ponownie przygotować plan.'));
+  layout.appendChild(budgetSection);
+
+  const habitsSection = createTodayNode('section', 'card today-habits-card');
+  habitsSection.appendChild(createTodayNode('h2', '', 'Nawyki'));
+  const habits = createTodayNode('div', 'habit-list');
+  habits.id = 'habit-list';
+  habitsSection.appendChild(habits);
+  layout.appendChild(habitsSection);
+
+  const completedSection = createTodayNode('section', 'card today-plan-completed');
+  completedSection.appendChild(createTodayNode('h2', '', 'Ukończone dzisiaj'));
+  if (completed.length) completed.forEach(task => appendTodayTaskSummary(completedSection, task, { action: 'undo', done: true }));
+  else completedSection.appendChild(createTodayNode('p', 'today-plan-empty', 'Ukończone zadania pojawią się tutaj.'));
+  layout.appendChild(completedSection);
+
+  const details = createTodayNode('details', 'card today-plan-details');
+  const detailsSummary = createTodayNode('summary', '', 'Szczegóły planu');
+  details.appendChild(detailsSummary);
+  const detailsBody = createTodayNode('div', 'today-plan-details-body');
+  if (isSuccess) {
+    detailsBody.appendChild(createTodayNode('p', 'today-plan-date', `Plan na ${plan.date} · ${plan.mode === 'scheduled' ? 'z godzinami' : 'bez przypisanych godzin'}`));
+    if (plan.mode === 'scheduled' && Array.isArray(plan.planningWindows)) {
+      const windows = plan.planningWindows
+        .filter(interval => interval && typeof interval.start === 'string' && typeof interval.end === 'string')
+        .map(interval => `${interval.start}–${interval.end}`);
+      detailsBody.appendChild(createTodayNode('p', 'today-plan-windows', windows.length ? `Okna planowania: ${windows.join(', ')}` : 'Brak pozostałych okien planowania.'));
+    }
+
+    const deferredSection = createTodayNode('section', 'today-plan-section today-plan-deferred');
+    deferredSection.appendChild(createTodayNode('h3', '', 'Odłożone'));
+    if (deferred.length) deferred.forEach(task => appendTodayTaskSummary(deferredSection, task, {
+      message: todayDeferredMessage(task.reason),
+      showPlanningClass: true
+    }));
+    else deferredSection.appendChild(createTodayNode('p', 'today-plan-empty', 'Brak odłożonych zadań.'));
+    detailsBody.appendChild(deferredSection);
+
+    const excludedSection = createTodayNode('section', 'today-plan-section today-plan-excluded');
+    excludedSection.appendChild(createTodayNode('h3', '', 'Poza planem'));
+    if (excluded.length) excluded.forEach(task => {
+      if (typeof task.title === 'string') appendTodayTaskSummary(excludedSection, task, { message: todayExcludedMessage(task.reason), done: task.reason === 'STATUS_DONE' });
+      else excludedSection.appendChild(createTodayNode('div', 'today-plan-reason', todayExcludedMessage(task.reason)));
+    });
+    else excludedSection.appendChild(createTodayNode('p', 'today-plan-empty', 'Brak wykluczonych zadań.'));
+    detailsBody.appendChild(excludedSection);
+
+    const warningSection = createTodayNode('section', 'today-plan-section today-plan-warnings');
+    warningSection.appendChild(createTodayNode('h3', '', 'Pełne ostrzeżenia'));
+    if (warnings.length) warnings.forEach(warning => warningSection.appendChild(createTodayNode('p', 'today-plan-reason', todayWarningMessage(warning && warning.code))));
+    else warningSection.appendChild(createTodayNode('p', 'today-plan-empty', 'Brak ostrzeżeń planu.'));
+    detailsBody.appendChild(warningSection);
+
+    const metricsSection = createTodayNode('section', 'today-plan-section today-plan-metrics');
+    metricsSection.appendChild(createTodayNode('h3', '', 'Metryki planu'));
+    const metrics = createTodayNode('div', 'today-plan-summary');
+    [
+      ['Źródło budżetu', todayBudgetSourceLabel(budget.source)],
+      ['Pełny budżet', Number.isInteger(budget.manualBudgetMinutes) ? `${budget.manualBudgetMinutes} min` : 'niedostępny'],
+      ['Pełna dostępność', Number.isInteger(budget.availableMinutes) ? `${budget.availableMinutes} min` : 'brak konfiguracji'],
+      ['Pozostała dostępność', Number.isInteger(budget.remainingAvailableMinutes) ? `${budget.remainingAvailableMinutes} min` : 'brak konfiguracji'],
+      ['Efektywny budżet', Number.isInteger(budget.effectiveBudgetMinutes) ? `${budget.effectiveBudgetMinutes} min` : 'niedostępny'],
+      ['Zaplanowano', Number.isInteger(totals.plannedMinutes) ? `${totals.plannedMinutes} min` : 'niedostępne'],
+      ['Pozostały budżet', Number.isInteger(totals.unusedEffectiveMinutes) ? `${totals.unusedEffectiveMinutes} min` : 'niedostępny'],
+      ['Nieprzydzielona dostępność', Number.isInteger(totals.uncommittedAvailabilityMinutes) ? `${totals.uncommittedAvailabilityMinutes} min` : 'brak konfiguracji']
+    ].forEach(([label, value]) => {
+      const item = createTodayNode('div', 'today-plan-summary-item');
+      item.appendChild(createTodayNode('span', 'today-plan-summary-label', label));
+      item.appendChild(createTodayNode('strong', '', value));
+      metrics.appendChild(item);
+    });
+    metricsSection.appendChild(metrics);
+    detailsBody.appendChild(metricsSection);
+  } else {
+    detailsBody.appendChild(createTodayNode('p', 'today-plan-reason', todayFatalMessage(plan && plan.code)));
+    warnings.forEach(warning => detailsBody.appendChild(createTodayNode('p', 'today-plan-reason', todayWarningMessage(warning && warning.code))));
+  }
+  details.appendChild(detailsBody);
+  layout.appendChild(details);
 
   const actionMessage = createTodayNode('div', 'today-plan-action-message');
   actionMessage.setAttribute('aria-live', 'polite');
-  container.appendChild(actionMessage);
-
-  container.querySelectorAll('[data-action="complete"]').forEach(checkbox => {
-    checkbox.addEventListener('change', () => {
-      checkbox.checked = false;
-      const target = todayTaskActionTargets.get(checkbox);
-      const result = target
-        ? delegateTodayTaskStatus(target.moduleId, target.taskId, 'done')
-        : { ok: false, changed: false };
-      if (!result.changed) actionMessage.textContent = result.ok
-        ? 'Status zadania nie wymagał zmiany.'
-        : 'Nie udało się zmienić statusu zadania.';
-    });
-  });
-  container.querySelectorAll('[data-action="undo"]').forEach(button => {
-    button.addEventListener('click', () => {
-      const target = todayTaskActionTargets.get(button);
-      const result = target
-        ? delegateTodayTaskStatus(target.moduleId, target.taskId, 'todo')
-        : { ok: false, changed: false };
-      if (!result.changed) actionMessage.textContent = result.ok
-        ? 'Status zadania nie wymagał zmiany.'
-        : 'Nie udało się cofnąć statusu zadania.';
-    });
-  });
+  layout.appendChild(actionMessage);
 }
 
 function renderTodayContexts() {
@@ -495,15 +580,205 @@ function renderTodayContexts() {
   });
 }
 
+function renderTodayCheckIn(plan, date) {
+  const host = document.getElementById('today-checkin-content');
+  if (!host) return;
+  let record;
+  try {
+    record = DayEngine.getRecord(date);
+    if (record !== null && (!record || typeof record !== 'object' || Array.isArray(record))) {
+      throw new TypeError('INVALID_DAY_RECORD');
+    }
+  } catch (error) {
+    host.appendChild(createTodayNode('p', 'today-checkin-neutral', 'Nie można bezpiecznie odczytać zapisu check-inu. Pozostała część widoku nadal jest dostępna.'));
+    return;
+  }
+  let energy = plan && plan.ok === true && plan.energy ? plan.energy : null;
+  if (!energy && record && Object.prototype.hasOwnProperty.call(record, 'energyScore')
+      && Number.isInteger(record.energyScore) && record.energyScore >= 0 && record.energyScore <= 100) {
+    energy = { checkInCompleted: true, score: record.energyScore };
+  }
+  if (energy && energy.checkInCompleted) {
+    const score = Number.isInteger(energy.score) ? energy.score : null;
+    const summary = createTodayNode('div', 'today-energy-summary');
+    summary.appendChild(createTodayNode('div', 'energy-num', score === null ? '—' : score));
+    const body = createTodayNode('div');
+    if (score !== null) {
+      const advice = DayEngine.advice(score);
+      body.appendChild(createTodayNode('div', `badge ${score >= 75 ? 'ok' : score >= 50 ? '' : 'warn'}`, `${advice.level} energia`));
+      body.appendChild(createTodayNode('p', 'today-energy-advice', advice.text));
+    } else body.appendChild(createTodayNode('p', 'today-energy-advice', 'Zapis energii wymaga sprawdzenia.'));
+    if (record && Number.isFinite(record.sleepHours) && Number.isInteger(record.sleepQuality)) {
+      body.appendChild(createTodayNode('p', 'today-energy-meta', `Sen: ${record.sleepHours} h · jakość ${record.sleepQuality}/5`));
+    }
+    summary.appendChild(body);
+    host.appendChild(summary);
+    const edit = createTodayNode('button', 'ghost', 'Zmień check-in');
+    edit.type = 'button';
+    edit.id = 'edit-checkin';
+    edit.addEventListener('click', () => {
+      const records = Store.get('dayRecords', {});
+      const current = records && typeof records === 'object' && !Array.isArray(records) ? records[date] : null;
+      if (!current || typeof current !== 'object' || Array.isArray(current)) return;
+      const nextRecord = { ...current };
+      delete nextRecord.sleepHours;
+      delete nextRecord.sleepQuality;
+      delete nextRecord.energyScore;
+      Store.set('dayRecords', { ...records, [date]: nextRecord });
+      todayPendingFocus = { type: 'checkin' };
+      renderDzis();
+    });
+    host.appendChild(edit);
+    return;
+  }
+
+  host.appendChild(createTodayNode('p', '', 'Ile spałeś i jak oceniasz jakość snu? Plan działa także bez check-inu, ale ta informacja pomaga dopasować trudność.'));
+  const hoursRow = createTodayNode('div', 'field-row');
+  const hoursLabel = createTodayNode('label', '', 'Godziny snu');
+  hoursLabel.htmlFor = 'sleep-hours';
+  const hoursInput = createTodayNode('input');
+  hoursInput.type = 'number';
+  hoursInput.id = 'sleep-hours';
+  hoursInput.min = '0.5';
+  hoursInput.max = '14';
+  hoursInput.step = '0.5';
+  hoursInput.placeholder = 'np. 7.5';
+  hoursRow.append(hoursLabel, hoursInput);
+  host.appendChild(hoursRow);
+
+  const qualityGroup = createTodayNode('fieldset', 'today-quality-fieldset');
+  qualityGroup.appendChild(createTodayNode('legend', '', 'Jakość snu od 1 do 5'));
+  const qualityButtons = createTodayNode('div', 'quality-btns');
+  let selectedQuality = 0;
+  [1, 2, 3, 4, 5].forEach(value => {
+    const button = createTodayNode('button', 'qbtn', value);
+    button.type = 'button';
+    button.dataset.q = String(value);
+    button.setAttribute('aria-pressed', 'false');
+    button.addEventListener('click', () => {
+      selectedQuality = value;
+      qualityButtons.querySelectorAll('.qbtn').forEach(item => {
+        const active = item === button;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    });
+    qualityButtons.appendChild(button);
+  });
+  qualityGroup.appendChild(qualityButtons);
+  host.appendChild(qualityGroup);
+
+  const save = createTodayNode('button', 'primary', 'Zapisz check-in');
+  save.type = 'button';
+  save.id = 'save-checkin';
+  save.addEventListener('click', () => {
+    const hours = Number(hoursInput.value);
+    if (!Number.isFinite(hours) || hours < 0.5 || hours > 14 || !selectedQuality) {
+      alert('Podaj godziny snu od 0,5 do 14 i wybierz jakość od 1 do 5.');
+      return;
+    }
+    todayPendingFocus = { type: 'checkin' };
+    DayEngine.checkIn(hours, selectedQuality);
+  });
+  host.appendChild(save);
+}
+
+function restoreTodayPendingFocus() {
+  if (!todayPendingFocus) return;
+  const pending = todayPendingFocus;
+  todayPendingFocus = null;
+  if (pending.type === 'budget') {
+    document.querySelector(`.time-btn[data-key="${pending.key}"]`)?.focus();
+    return;
+  }
+  if (pending.type === 'checkin') {
+    (document.getElementById('edit-checkin') || document.getElementById('sleep-hours'))?.focus();
+    return;
+  }
+  if (pending.type === 'task') {
+    let restored = false;
+    document.querySelectorAll(`[data-action="${pending.action}"]`).forEach(button => {
+      if (restored) return;
+      const target = todayTaskActionTargets.get(button);
+      if (target && target.moduleId === pending.moduleId && target.taskId === pending.taskId) {
+        button.focus();
+        restored = document.activeElement === button;
+      }
+    });
+    if (!restored) document.querySelector('.today-plan-details > summary')?.focus();
+  }
+}
+
+function wireTodayProductActions(plan) {
+  const layout = document.getElementById('today-tasks');
+  if (!layout) return;
+  layout.querySelectorAll('[data-today-focus]').forEach(button => {
+    button.addEventListener('click', () => {
+      const section = document.getElementById(button.dataset.todayFocus);
+      const firstControl = section && section.querySelector('input,button,select,textarea,summary');
+      (firstControl || section)?.focus();
+    });
+  });
+  layout.querySelectorAll('[data-today-route]').forEach(button => {
+    button.addEventListener('click', () => navigateFromUser(button.dataset.todayRoute));
+  });
+  layout.querySelectorAll('[data-today-retry]').forEach(button => {
+    button.addEventListener('click', () => renderTodayTasks());
+  });
+  layout.querySelectorAll('.time-btn').forEach(button => {
+    button.addEventListener('click', () => {
+      const currentKey = plan && plan.ok === true && plan.budget ? plan.budget.manualBudgetKey : null;
+      if (button.dataset.key === currentKey) return;
+      Store.set('ui:timeBudget', button.dataset.key);
+      todayPendingFocus = { type: 'budget', key: button.dataset.key };
+      renderTodayTasks();
+    });
+  });
+  layout.querySelectorAll('[data-action="complete"],[data-action="undo"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const target = todayTaskActionTargets.get(button);
+      const complete = button.dataset.action === 'complete';
+      todayPendingFocus = target ? {
+        type: 'task',
+        moduleId: target.moduleId,
+        taskId: target.taskId,
+        action: complete ? 'undo' : 'complete'
+      } : null;
+      const result = target
+        ? delegateTodayTaskStatus(target.moduleId, target.taskId, complete ? 'done' : 'todo')
+        : { ok: false, changed: false };
+      if (!result.changed) {
+        todayPendingFocus = null;
+        const message = document.querySelector('.today-plan-action-message');
+        if (message) message.textContent = result.ok
+          ? 'Status zadania nie wymagał zmiany.'
+          : complete ? 'Nie udało się zmienić statusu zadania.' : 'Nie udało się cofnąć statusu zadania.';
+        button.focus();
+      }
+    });
+  });
+  layout.querySelectorAll('[data-action="open-details"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const target = todayDetailsActionTargets.get(button);
+      if (target && canOpenTodayTaskDetails(target.moduleId)) navigateFromUser(target.moduleId);
+    });
+  });
+}
+
 function renderTodayTasks(now = new Date()) {
   const today = localDateKey(now);
-  renderTodayContexts();
-  const container = document.getElementById('today-tasks');
+  const container = document.getElementById('view-dzis');
   if (!container) return null;
   const budgetKey = Store.get('ui:timeBudget', 'normal');
   const plan = PlanDayEngine.getPlanForToday(budgetKey, now);
   todayPlanLastRenderedDate = plan && plan.ok === true ? plan.date : today;
   renderTodayPlanResult(plan, container);
+  renderTodayCheckIn(plan, todayPlanLastRenderedDate);
+  renderTodayContexts();
+  renderHabitList(todayPlanLastRenderedDate);
+  wireTodayProductActions(plan);
+  if (typeof updateTodayShellContext === 'function') updateTodayShellContext(plan);
+  restoreTodayPendingFocus();
   return plan;
 }
 
@@ -558,26 +833,36 @@ const TodayPlanLifecycle = (() => {
   return Object.freeze({ start, stop, getState });
 })();
 
-function renderHabitList() {
+function renderHabitList(date = DayEngine.todayKey()) {
   const el = document.getElementById('habit-list');
-  const date = DayEngine.todayKey();
-  const habits = HabitEngine.defs().filter(h => h.active);
-  el.innerHTML = habits.map(h => {
-    const done = HabitEngine.isDone(h.id, date);
-    const s = HabitEngine.streak(h.id);
-    return `
-      <div class="habit-item">
-        <input type="checkbox" class="cb" id="habit-${escapeAttr(h.id)}" ${done ? 'checked' : ''}>
-        <label for="habit-${escapeAttr(h.id)}">${escapeHtml(h.label)} <span class="pillar-tag">· ${escapeHtml(h.goalPillar)}</span></label>
-        <span class="habit-streak ${s >= 7 ? 'hot' : ''}">${s > 0 ? '🔥 ' + s + ' dni' : ''}</span>
-        <span class="badge">+${h.xp} XP</span>
-      </div>
-    `;
-  }).join('');
+  if (!el) return;
+  clearTodayNode(el);
+  const defs = HabitEngine.defs();
+  const habits = Array.isArray(defs) ? defs.filter(habit => habit && habit.active) : [];
+  if (!habits.length) el.appendChild(createTodayNode('p', 'today-plan-empty', 'Brak aktywnych nawyków.'));
   habits.forEach(h => {
-    document.getElementById('habit-' + h.id).addEventListener('change', (e) => {
-      HabitEngine.log(h.id, date, e.target.checked);
-      renderHabitList();
+    const done = HabitEngine.isDone(h.id, date);
+    const streak = HabitEngine.streak(h.id);
+    const row = createTodayNode('div', 'habit-item');
+    const checkbox = createTodayNode('input', 'cb');
+    checkbox.type = 'checkbox';
+    checkbox.checked = done;
+    checkbox.setAttribute('aria-label', `Nawyk: ${h.label}`);
+    todayHabitTargets.set(checkbox, { habitId: h.id });
+    const label = createTodayNode('span', 'habit-label', h.label);
+    if (h.goalPillar) {
+      label.appendChild(document.createTextNode(' '));
+      label.appendChild(createTodayNode('span', 'pillar-tag', `· ${h.goalPillar}`));
+    }
+    row.append(checkbox, label);
+    if (streak > 0) row.appendChild(createTodayNode('span', `habit-streak${streak >= 7 ? ' hot' : ''}`, `${streak} dni serii`));
+    if (Number.isFinite(h.xp)) row.appendChild(createTodayNode('span', 'badge', `+${h.xp} XP`));
+    el.appendChild(row);
+    checkbox.addEventListener('change', event => {
+      const target = todayHabitTargets.get(checkbox);
+      if (!target) return;
+      HabitEngine.log(target.habitId, date, event.target.checked);
+      renderHabitList(date);
     });
   });
 }

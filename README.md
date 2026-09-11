@@ -101,6 +101,10 @@ Changes follow a one-step-at-a-time process:
 5. apply only the identified corrections;
 6. commit only after explicit acceptance.
 
+## Author
+
+Created and maintained by [Karol Grzelak](https://github.com/KarollGrzelak).
+
 ## License
 
 Licensed under the [MIT License](LICENSE).

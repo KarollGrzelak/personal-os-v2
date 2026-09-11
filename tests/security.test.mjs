@@ -4,6 +4,8 @@ import {
   FIXED_THURSDAY,
   backupEnvelope,
   cloneJson,
+  englishActivity,
+  englishProfile,
   lessonGuideRecord,
   populatedBackupEnvelope,
   resource
@@ -214,9 +216,7 @@ test('rzeczywisty DOM LessonGuide ponownie sprawdza URL i nie interpretuje nieza
   app.api.Store.set('it:lessonGuides', { [criterionId]: guide });
   const container = app.document.getElementById('view-it');
   module.render(container);
-  container.querySelector(`.stage-card[data-stage="${stage.id}"] .stage-head`).click();
-  container.querySelector(`.guide-toggle-btn[data-crit="${criterionId}"]`).click();
-  const panel = container.querySelector(`#guide-panel-${criterionId}`);
+  const panel = container.querySelector(`#learning-current-guide-${criterionId}`);
 
   assert.equal(app.window.syntheticExecuted, undefined);
   assert.equal(panel.querySelector('script, img, svg'), null);
@@ -226,6 +226,31 @@ test('rzeczywisty DOM LessonGuide ponownie sprawdza URL i nie interpretuje nieza
   assert.match(panel.textContent, /<script id="synthetic-script">/);
   assert.match(panel.textContent, /nieprawidłowy URL/);
   assert.match(panel.textContent, /<\/textarea>/);
+});
+
+test('produktowy widok bieżącej aktywności English escapuje HTML i zabezpiecza link zewnętrzny', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const payload = '<img id="english-product-xss" src=x onerror="syntheticExecuted=true">';
+  app.api.Store.set('english:profile', app.window.JSON.parse(JSON.stringify(englishProfile())));
+  app.api.Store.set('english:activities', app.window.JSON.parse(JSON.stringify([englishActivity({
+    id: 'english-product-security',
+    title: payload,
+    objective: payload,
+    resourceUrl: 'https://example.test/synthetic-secure-resource',
+    current: true
+  })])));
+  const beforeRequests = [...app.resourceControl.requests];
+  const container = app.document.getElementById('view-english');
+  app.api.EnglishModule.render(container);
+
+  assert.equal(app.window.syntheticExecuted, undefined);
+  assert.equal(container.querySelector('script, img, [onerror]'), null);
+  assert.match(container.textContent, /<img id="english-product-xss"/);
+  const links = [...container.querySelectorAll('a[href="https://example.test/synthetic-secure-resource"]')];
+  assert.equal(links.length >= 1, true);
+  assert.equal(links.every(link => link.target === '_blank' && link.rel === 'noopener noreferrer'), true);
+  assert.deepEqual(app.resourceControl.requests, beforeRequests);
 });
 
 test('produktowe widoki Trening i Szkoła renderują tekst profilu, zadań, notatek i planu bez interpretacji HTML', async t => {

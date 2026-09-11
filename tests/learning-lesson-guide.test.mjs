@@ -233,3 +233,116 @@ test('import domenowy wymusza draft, zachowuje legacyContent i resetuje pola prz
   assert.equal('sourcesCheckedAt' in result.guide, false);
   assert.equal(result.guide.why, 'Imported synthetic content');
 });
+
+test('produktowy widok Learning stawia bieżącą lekcję i uczciwe braki przed roadmapą', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = learning(app.api);
+  const stage = app.api.ROADMAP_STAGES[0];
+  const criterion = stage.criteria[0];
+  const container = app.document.getElementById('view-it');
+
+  module.render(container);
+
+  const layout = container.querySelector('.learning-product-layout');
+  assert.ok(layout);
+  assert.deepEqual([...layout.children].map(element => element.classList.contains('learning-current-card') ? 'current' : 'roadmap'), ['current', 'roadmap']);
+  assert.match(layout.querySelector('#learning-current-title').textContent, new RegExp(criterion.title));
+  assert.match(layout.querySelector('.learning-current-purpose').textContent, new RegExp(stage.why));
+  assert.match(layout.querySelector('.learning-current-guide').textContent, /Materiał do tej lekcji nie jest jeszcze przygotowany/);
+  assert.match(layout.querySelector('.learning-completion').textContent, /Kryterium ukończenia/);
+  assert.equal(layout.querySelectorAll('.learning-current-card .primary').length, 1);
+  assert.equal(layout.querySelector('.learning-guide-advanced').open, false);
+  assert.equal(layout.querySelector('.learning-guide-advanced textarea').closest('details').open, false);
+  assert.equal(layout.querySelectorAll('.learning-roadmap-card > #roadmap-tree > details.stage-card').length, app.api.ROADMAP_STAGES.length);
+  assert.equal([...layout.querySelectorAll('.learning-roadmap-card > #roadmap-tree > details.stage-card')].every(element => element.querySelector(':scope > summary.stage-head')), true);
+  assert.doesNotMatch(layout.textContent, /ChatGPT|Claude|Codex/);
+});
+
+test('Learning pokazuje częściowy i pełny LessonGuide bez tworzenia brakującej treści', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = learning(app.api);
+  const criterionId = app.api.ROADMAP_STAGES[0].criteria[0].id;
+  const container = app.document.getElementById('view-it');
+
+  app.api.Store.set('it:lessonGuides', {
+    [criterionId]: lessonGuideRecord(criterionId, { why: 'Synthetic partial purpose' })
+  });
+  module.render(container);
+  const partial = container.querySelector('.learning-current-guide');
+  assert.match(partial.textContent, /Synthetic partial purpose/);
+  assert.match(partial.textContent, /Nie zapisano materiału do otwarcia/);
+  assert.match(partial.textContent, /Nie zapisano jeszcze kolejności wykonania/);
+  assert.match(partial.textContent, /Nie zapisano jeszcze ćwiczenia praktycznego/);
+
+  app.api.Store.set('it:lessonGuides', {
+    [criterionId]: lessonGuideRecord(criterionId, lessonGuideContent({
+      why: 'Synthetic complete purpose',
+      resources: { documentation: [resource()], articles: [], videos: [], additional: [] },
+      workOrder: [{ id: 'synthetic-step', order: 0, title: 'Synthetic instruction', description: 'Perform the step' }],
+      exercises: [{ id: 'synthetic-exercise', title: 'Synthetic exercise', description: 'Complete it', difficulty: 2 }],
+      selfTest: [{ id: 'synthetic-question', prompt: 'Synthetic check?', answer: 'Synthetic answer' }]
+    }))
+  });
+  module.render(container);
+  const complete = container.querySelector('.learning-current-card');
+  assert.match(complete.textContent, /Synthetic complete purpose/);
+  assert.match(complete.textContent, /Synthetic instruction/);
+  assert.match(complete.textContent, /Synthetic exercise/);
+  assert.match(complete.textContent, /Synthetic check/);
+  const primaryLink = complete.querySelector('.product-primary-action a');
+  assert.equal(primaryLink.href, 'https://example.test/documentation');
+  assert.equal(primaryLink.target, '_blank');
+  assert.equal(primaryLink.rel, 'noopener noreferrer');
+});
+
+test('disclosure roadmapy Learning nie zapisuje ani nie emituje, a mutacje zachowują logiczny fokus', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = learning(app.api);
+  const stage = app.api.ROADMAP_STAGES[0];
+  const currentId = stage.criteria[0].id;
+  const secondId = stage.criteria[1].id;
+  const container = app.document.getElementById('view-it');
+  module.render(container);
+
+  let writes = 0;
+  let events = 0;
+  const originalSet = app.api.Store.set;
+  const originalEmit = app.api.EventBus.emit;
+  app.api.Store.set = (...args) => { writes += 1; return originalSet(...args); };
+  app.api.EventBus.emit = (...args) => { events += 1; return originalEmit(...args); };
+  const stageDisclosure = container.querySelector(`[data-stage="${stage.id}"]`);
+  stageDisclosure.querySelector(':scope > summary').click();
+  stageDisclosure.querySelector(':scope > summary').click();
+  const guideDisclosure = container.querySelector(`#guide-panel-${secondId}`).closest('details');
+  guideDisclosure.querySelector(':scope > summary').click();
+  assert.equal(writes, 0);
+  assert.equal(events, 0);
+  assert.equal(guideDisclosure.open, true);
+  app.api.Store.set = originalSet;
+  app.api.EventBus.emit = originalEmit;
+
+  container.querySelector('#learning-create-current-guide').click();
+  assert.equal(app.document.activeElement, container.querySelector('.learning-current-guide textarea'));
+  const whyField = container.querySelector('.learning-current-guide textarea');
+  whyField.value = 'Synthetic UI guide';
+  whyField.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  container.querySelector('.learning-current-guide .learning-guide-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  assert.equal(module.getLessonGuide(currentId).why, 'Synthetic UI guide');
+  assert.notEqual(app.document.activeElement, app.document.body);
+
+  container.querySelector('#learning-complete-current').click();
+  assert.equal(app.document.activeElement, container.querySelector('#learning-current-title'));
+  assert.doesNotMatch(container.querySelector('#learning-current-title').textContent, new RegExp(currentId));
+
+  const firstCheckbox = [...container.querySelectorAll('[data-criterion-checkbox]')]
+    .find(input => input.dataset.criterionCheckbox === currentId);
+  firstCheckbox.checked = false;
+  firstCheckbox.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  const restoredCheckbox = [...container.querySelectorAll('[data-criterion-checkbox]')]
+    .find(input => input.dataset.criterionCheckbox === currentId);
+  assert.equal(app.document.activeElement, restoredCheckbox);
+  assert.equal(restoredCheckbox.closest('details.stage-card').open, true);
+});

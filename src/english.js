@@ -36,6 +36,9 @@ const ENGLISH_TYPE_LABELS = {
   writing: 'Pisanie',
   speaking: 'Mówienie'
 };
+const ENGLISH_DIFFICULTY_LABELS = {
+  1: 'Bardzo łatwa', 2: 'Łatwa', 3: 'Średnia', 4: 'Trudna', 5: 'Bardzo trudna'
+};
 
 function isEnglishPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -411,54 +414,77 @@ const EnglishModule = {
 
 function renderEnglishErrors(target, errors) {
   if (!target) return;
+  target.hidden = false;
   target.style.display = 'block';
   target.textContent = (errors || []).join(' · ');
 }
 
-function refreshEnglishAfterMutation(module, container, result) {
-  return !!(result.ok && result.changed);
+function focusEnglishElement(target) {
+  if (!target) return;
+  let disclosure = target.closest('details');
+  while (disclosure) {
+    disclosure.open = true;
+    disclosure = disclosure.parentElement?.closest('details') || null;
+  }
+  target.focus();
 }
 
-function renderEnglishProfileForm(module, container, host, profile) {
+function focusEnglishControl(container, selector) {
+  focusEnglishElement(container.querySelector(selector));
+}
+
+function findEnglishActivityCard(container, activityId) {
+  return Array.from(container.querySelectorAll('[data-english-id]'))
+    .find(card => card.dataset.englishId === activityId) || null;
+}
+
+function restoreEnglishFocusAfterMutation(container, result, focusTarget) {
+  if (!(result.ok && result.changed)) return false;
+  if (typeof focusTarget === 'function') focusTarget();
+  else if (focusTarget) focusEnglishControl(container, focusTarget);
+  return true;
+}
+
+function renderEnglishProfileForm(module, container, host, profile, initialFocus = false) {
   const validProfile = validateEnglishProfile(profile).valid ? profile : null;
   const selectedLevel = validProfile?.selfAssessedLevel ?? 'unknown';
   host.innerHTML = `
     ${profile === null ? '<p>Profil nie jest jeszcze skonfigurowany. Uzupełnij poniższe pola, aby go utworzyć.</p>' : ''}
     ${profile !== null && !validProfile ? '<div class="banner-warn">Dane profilu Angielskiego są niepoprawne. Zapisz poprawny profil; istniejące dane nie zostaną automatycznie naprawione ani usunięte.</div>' : ''}
-    <div class="profile-form">
-      <div class="field-row">
-        <label>Moduł aktywny</label>
+    <form class="profile-form english-profile-form">
+      <div class="field-row english-checkbox-field">
         <input type="checkbox" id="english-profile-enabled" ${validProfile?.enabled ? 'checked' : ''}>
+        <label for="english-profile-enabled">Angielski jest włączony</label>
       </div>
       <div class="field-row">
-        <label>Poziom</label>
+        <label for="english-profile-level">Twój poziom</label>
         <select id="english-profile-level">
-          <option value="">wybierz</option>
+          <option value="">Wybierz poziom</option>
           ${ENGLISH_LEVELS.map(level => `<option value="${level}" ${selectedLevel === level ? 'selected' : ''}>${ENGLISH_LEVEL_LABELS[level]}</option>`).join('')}
         </select>
       </div>
       <div class="field-row">
-        <label>Minuty tygodniowo</label>
+        <label for="english-profile-weekly">Czas na naukę w tygodniu (minuty)</label>
         <input type="number" id="english-profile-weekly" min="15" max="840" step="1" value="${escapeAttr(validProfile?.weeklyMinutes ?? '')}" placeholder="15-840">
       </div>
       <div class="field-row">
-        <label>Kierunek</label>
+        <label for="english-profile-focus">Główny kierunek nauki</label>
         <select id="english-profile-focus">
-          <option value="">wybierz</option>
+          <option value="">Wybierz kierunek</option>
           ${ENGLISH_FOCUSES.map(focus => `<option value="${focus}" ${validProfile?.focus === focus ? 'selected' : ''}>${ENGLISH_FOCUS_LABELS[focus]}</option>`).join('')}
         </select>
       </div>
-      <p>Minuty tygodniowo są w MVP wyłącznie informacją — nie zmieniają automatycznie planu dnia ani priorytetu.</p>
-      <div class="field-row">
-        <button class="primary" id="english-profile-save">Zapisz profil</button>
-        ${validProfile ? '<button class="ghost" id="english-profile-cancel">Anuluj</button>' : ''}
+      <p class="product-supporting-copy">Podany czas pomaga opisać Twój plan nauki; nie zmienia samodzielnie planu dnia.</p>
+      <div class="field-row form-actions">
+        <button type="submit" class="primary" id="english-profile-save">Zapisz profil</button>
+        ${validProfile ? '<button type="button" class="ghost" id="english-profile-cancel">Anuluj</button>' : ''}
       </div>
-      <div id="english-profile-errors" style="display:none;color:#f87171;font-size:12px;"></div>
-    </div>
+      <div class="log-errors" id="english-profile-errors" role="alert" aria-live="polite" hidden></div>
+    </form>
   `;
 
-  const saveButton = host.querySelector('#english-profile-save');
-  saveButton.addEventListener('click', () => {
+  host.querySelector('.english-profile-form').addEventListener('submit', event => {
+    event.preventDefault();
     const result = module.saveProfile({
       enabled: host.querySelector('#english-profile-enabled').checked,
       selfAssessedLevel: host.querySelector('#english-profile-level').value,
@@ -469,48 +495,62 @@ function renderEnglishProfileForm(module, container, host, profile) {
       renderEnglishErrors(host.querySelector('#english-profile-errors'), result.errors);
       return;
     }
-    if (!refreshEnglishAfterMutation(module, container, result)) {
+    if (!restoreEnglishFocusAfterMutation(container, result, '#english-profile-edit')) {
       const status = host.querySelector('#english-profile-errors');
-      status.style.display = 'block';
-      status.style.color = 'var(--text3)';
+      status.hidden = false;
       status.textContent = 'Brak zmian do zapisania.';
     }
   });
-  host.querySelector('#english-profile-cancel')?.addEventListener('click', () => module.render(container));
+  host.querySelector('#english-profile-cancel')?.addEventListener('click', () => {
+    module.render(container);
+    focusEnglishControl(container, '#english-profile-edit');
+  });
+  if (initialFocus) focusEnglishControl(container, '#english-profile-enabled');
 }
 
-function renderEnglishActivityForm(module, container, host, existing) {
+function renderEnglishActivityForm(module, container, host, existing, focusField = null) {
   host.innerHTML = `
-    <div class="profile-form" style="margin-top:12px;">
+    <form class="profile-form english-activity-form">
       <div class="field-row">
+        <label for="english-activity-type">Rodzaj aktywności</label>
         <select id="english-activity-type">
-          <option value="">typ aktywności</option>
+          <option value="">Wybierz rodzaj</option>
           ${ENGLISH_ACTIVITY_TYPES.map(type => `<option value="${type}" ${existing?.type === type ? 'selected' : ''}>${ENGLISH_TYPE_LABELS[type]}</option>`).join('')}
         </select>
+      </div>
+      <div class="field-row">
+        <label for="english-activity-title">Temat</label>
         <input type="text" id="english-activity-title" maxlength="120" value="${escapeAttr(existing?.title ?? '')}" placeholder="Tytuł" style="width:220px;">
       </div>
       <div class="field-row">
-        <label>Cel aktywności</label>
+        <label for="english-activity-objective">Po co chcesz to zrobić</label>
         <textarea id="english-activity-objective" maxlength="500" rows="2" style="width:100%;">${escapeHtml(existing?.objective ?? '')}</textarea>
       </div>
       <div class="field-row">
-        <label>Zasób (opcjonalnie)</label>
+        <label for="english-activity-url">Adres materiału (opcjonalnie)</label>
         <input type="url" id="english-activity-url" maxlength="2048" value="${escapeAttr(existing?.resourceUrl ?? '')}" placeholder="https://..." style="width:280px;">
       </div>
       <div class="field-row">
+        <label for="english-activity-minutes">Czas (minuty)</label>
         <input type="number" id="english-activity-minutes" min="5" max="60" step="1" value="${escapeAttr(existing?.estimatedMinutes ?? '')}" placeholder="minuty" style="width:100px;">
-        <select id="english-activity-difficulty">
-          <option value="">trudność</option>
-          ${[1,2,3,4,5].map(value => `<option value="${value}" ${existing?.difficulty === value ? 'selected' : ''}>${value}</option>`).join('')}
-        </select>
-        <button class="primary" id="english-activity-save">${existing ? 'Zapisz edycję' : 'Dodaj aktywność'}</button>
-        ${existing ? '<button class="ghost" id="english-activity-cancel">Anuluj</button>' : ''}
       </div>
-      <div id="english-activity-errors" style="display:none;color:#f87171;font-size:12px;"></div>
-    </div>
+      <div class="field-row">
+        <label for="english-activity-difficulty">Trudność</label>
+        <select id="english-activity-difficulty">
+          <option value="">Wybierz trudność</option>
+          ${[1,2,3,4,5].map(value => `<option value="${value}" ${existing?.difficulty === value ? 'selected' : ''}>${ENGLISH_DIFFICULTY_LABELS[value]}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field-row form-actions">
+        <button type="submit" class="${existing ? 'primary' : 'ghost'}" id="english-activity-save">${existing ? 'Zapisz zmiany' : 'Dodaj aktywność'}</button>
+        ${existing ? '<button type="button" class="ghost" id="english-activity-cancel">Anuluj</button>' : ''}
+      </div>
+      <div class="log-errors" id="english-activity-errors" role="alert" aria-live="polite" hidden></div>
+    </form>
   `;
 
-  host.querySelector('#english-activity-save').addEventListener('click', () => {
+  host.querySelector('.english-activity-form').addEventListener('submit', event => {
+    event.preventDefault();
     const raw = {
       type: host.querySelector('#english-activity-type').value,
       title: host.querySelector('#english-activity-title').value,
@@ -526,14 +566,29 @@ function renderEnglishActivityForm(module, container, host, existing) {
       renderEnglishErrors(host.querySelector('#english-activity-errors'), result.errors);
       return;
     }
-    if (!refreshEnglishAfterMutation(module, container, result)) {
+    const focusAfterSave = () => {
+      if (existing) {
+        const card = findEnglishActivityCard(container, existing.id);
+        const action = card?.querySelector('[data-english-action="edit"]') || card;
+        if (card?.closest('details')) card.closest('details').open = true;
+        focusEnglishElement(action);
+      } else {
+        const card = findEnglishActivityCard(container, result.activity.id);
+        focusEnglishElement(card?.querySelector('[data-english-action="current"]') || card);
+      }
+    };
+    if (!restoreEnglishFocusAfterMutation(container, result, focusAfterSave)) {
       const status = host.querySelector('#english-activity-errors');
-      status.style.display = 'block';
-      status.style.color = 'var(--text3)';
+      status.hidden = false;
       status.textContent = 'Brak zmian do zapisania.';
     }
   });
-  host.querySelector('#english-activity-cancel')?.addEventListener('click', () => module.render(container));
+  host.querySelector('#english-activity-cancel')?.addEventListener('click', () => {
+    module.render(container);
+    const card = existing ? findEnglishActivityCard(container, existing.id) : null;
+    focusEnglishElement(card?.querySelector('[data-english-action="edit"]') || container.querySelector('#english-activity-title'));
+  });
+  if (focusField) focusEnglishControl(container, focusField);
 }
 
 function renderEnglishResource(activity) {
@@ -545,31 +600,29 @@ function renderEnglishResource(activity) {
 }
 
 function renderEnglishActivityRow(activity, context) {
-  const statusLabel = activity.status === 'done' ? 'Ukończone'
-    : activity.status === 'skipped' ? 'Pominięte'
-      : activity.current ? 'Bieżące' : 'W kolejce';
+  const statusLabel = activity.status === 'done' ? 'Wykonana' : activity.status === 'skipped' ? 'Odłożona' : 'Do zrobienia';
   const actionButtons = activity.status === 'todo'
-    ? `${activity.current ? '' : '<button class="ghost" data-english-action="current">Ustaw jako bieżące</button>'}
-       <button class="ghost" data-english-action="done">Ukończ</button>
-       <button class="ghost" data-english-action="skipped">Pomiń</button>`
-    : '<button class="ghost" data-english-action="todo">Przywróć do kolejki</button>';
+    ? `${activity.current ? '' : '<button type="button" class="ghost" data-english-action="current">Wybierz jako bieżącą</button>'}
+       <button type="button" class="ghost" data-english-action="done">Oznacz jako wykonaną</button>
+       <button type="button" class="ghost" data-english-action="skipped">Odłóż</button>`
+    : '<button type="button" class="ghost" data-english-action="todo">Przywróć</button>';
   return `
-    <div class="exercise-card" data-english-id="${escapeAttr(activity.id)}" data-english-context="${escapeAttr(context)}">
+    <article class="exercise-card english-activity-card" data-english-id="${escapeAttr(activity.id)}" data-english-context="${escapeAttr(context)}" tabindex="-1">
       <div class="ex-head">
         <span class="ex-name">${escapeHtml(activity.title)}</span>
-        <span class="badge ${activity.status === 'done' ? 'ok' : activity.current ? 'warn' : ''}">${escapeHtml(statusLabel)}</span>
+        <span class="badge ${activity.status === 'done' ? 'ok' : ''}">${escapeHtml(statusLabel)}</span>
       </div>
-      <div class="ex-detail"><b>Typ</b>${escapeHtml(ENGLISH_TYPE_LABELS[activity.type])}</div>
-      <div class="ex-detail"><b>Cel</b>${escapeHtml(activity.objective)}</div>
-      <div class="ex-detail"><b>Plan</b>${activity.estimatedMinutes} min · trudność ${activity.difficulty} · priorytet ${ENGLISH_TASK_PRIORITY}</div>
+      <div class="ex-detail"><b>Rodzaj</b>${escapeHtml(ENGLISH_TYPE_LABELS[activity.type])}</div>
+      <div class="ex-detail"><b>Po co</b>${escapeHtml(activity.objective)}</div>
+      <div class="ex-detail"><b>Plan</b>${activity.estimatedMinutes} min · ${escapeHtml(ENGLISH_DIFFICULTY_LABELS[activity.difficulty])}</div>
       ${activity.completedDate ? `<div class="ex-detail"><b>Data ukończenia</b>${escapeHtml(activity.completedDate)}</div>` : ''}
-      ${activity.resourceUrl !== null ? `<div class="ex-detail"><b>Materiał</b>${renderEnglishResource(activity)} <span class="pillar-tag">Jakość i aktualność oceń ręcznie.</span></div>` : ''}
-      <div class="field-row" style="margin-top:8px;">
+      <div class="ex-detail"><b>Materiał</b>${activity.resourceUrl !== null ? renderEnglishResource(activity) : '<span class="product-missing">Nie dodano materiału.</span>'}</div>
+      <div class="field-row english-card-actions">
         ${actionButtons}
-        <button class="ghost" data-english-action="edit">Edytuj treść</button>
-        <button class="ghost" data-english-action="delete">Usuń</button>
+        <button type="button" class="ghost" data-english-action="edit">Edytuj</button>
+        <button type="button" class="ghost" data-english-action="delete">Usuń</button>
       </div>
-    </div>
+    </article>
   `;
 }
 
@@ -579,38 +632,105 @@ function renderEnglishModuleView(module, container) {
   const profileIsValid = profile !== null && profileCheck.valid;
   const activities = module.getActivities();
   const activitiesCheck = validateEnglishActivities(activities);
+  const safeActivities = activitiesCheck.valid ? activities : [];
+  const current = safeActivities.find(activity => activity.current) || null;
+  const queued = safeActivities.filter(activity => activity.status === 'todo' && !activity.current);
+  const history = safeActivities.filter(activity => activity.status === 'done' || activity.status === 'skipped');
+  const queueVisible = queued.slice(0, 6);
+  const queueRest = queued.slice(6);
+  const historyVisible = history.slice(0, 6);
+  const historyRest = history.slice(6);
+  const canUseActivities = activitiesCheck.valid;
 
-  container.innerHTML = `
-    <div class="card">
-      <h3>🇬🇧 Profil Angielskiego</h3>
+  let currentPrimary;
+  if (current?.resourceUrl && isValidResourceUrl(current.resourceUrl)) {
+    currentPrimary = `<a class="primary primary-link" href="${escapeAttr(current.resourceUrl)}" target="_blank" rel="noopener noreferrer">Otwórz materiał</a>`;
+  } else if (current) {
+    currentPrimary = '<button type="button" class="primary" id="english-add-current-material">Dodaj materiał</button>';
+  } else if (!profileIsValid) {
+    currentPrimary = '<button type="button" class="primary" id="english-go-profile">Skonfiguruj profil</button>';
+  } else if (!profile.enabled) {
+    currentPrimary = '<button type="button" class="primary" id="english-enable-primary">Włącz Angielski</button>';
+  } else if (queued.length) {
+    currentPrimary = '<button type="button" class="primary" id="english-go-queue">Wybierz pierwszą aktywność</button>';
+  } else {
+    currentPrimary = '<button type="button" class="primary" id="english-go-add">Dodaj aktywność</button>';
+  }
+
+  const currentContent = current
+    ? `<article class="english-current-activity" data-english-id="${escapeAttr(current.id)}" data-english-context="current" tabindex="-1">
+        <h2 id="english-current-title" tabindex="-1">${escapeHtml(current.title)}</h2>
+        <div class="product-meta"><span>${escapeHtml(ENGLISH_TYPE_LABELS[current.type])}</span><span>${current.estimatedMinutes} min</span><span>${escapeHtml(ENGLISH_DIFFICULTY_LABELS[current.difficulty])}</span></div>
+        <div class="product-primary-action">${currentPrimary}</div>
+        <div class="english-current-details">
+          <section><h3>Po co</h3><p>${escapeHtml(current.objective)}</p></section>
+          <section><h3>Materiał</h3>${current.resourceUrl ? `<p class="english-resource-address">${escapeHtml(current.resourceUrl)}</p>` : '<p class="product-missing">Nie dodano jeszcze materiału do otwarcia.</p>'}</section>
+          <section><h3>Instrukcja wykonania</h3><p class="product-missing">Ta aktywność nie zawiera osobnej instrukcji.</p></section>
+          <section><h3>Ćwiczenie praktyczne</h3><p class="product-missing">Ta aktywność nie zawiera osobnego ćwiczenia.</p></section>
+          <section><h3>Kryterium ukończenia</h3><p>Oznacz aktywność jako wykonaną, gdy zrealizujesz zapisany cel.</p></section>
+        </div>
+        <div class="field-row english-card-actions">
+          <button type="button" class="ghost" data-english-action="done">Oznacz jako wykonaną</button>
+          <button type="button" class="ghost" data-english-action="skipped">Odłóż</button>
+          <button type="button" class="ghost" data-english-action="edit">Edytuj</button>
+          <button type="button" class="ghost" data-english-action="delete">Usuń</button>
+        </div>
+      </article>`
+    : `<div class="english-empty-state">
+        <h2 id="english-current-title" tabindex="-1">Brak bieżącej aktywności</h2>
+        <p>${!canUseActivities
+          ? 'Nie można teraz wyświetlić aktywności. Istniejące dane pozostają bez zmian.'
+          : queued.length ? 'Wybierz jedną aktywność z kolejki.' : 'Dodaj aktywność, aby rozpocząć naukę.'}</p>
+        <div class="product-primary-action">${currentPrimary}</div>
+      </div>`;
+
+  container.innerHTML = `<div class="english-product-layout">
+    <section class="card english-current-card" aria-labelledby="english-current-section-title">
+      <p class="product-eyebrow" id="english-current-section-title">Teraz</p>
+      ${currentContent}
+      <div class="log-errors" id="english-action-errors" role="alert" aria-live="polite" hidden></div>
+    </section>
+    <section class="card english-queue-card" aria-labelledby="english-queue-title">
+      <div class="product-section-heading"><h2 id="english-queue-title" tabindex="-1">Kolejka</h2><span class="badge">${queued.length}</span></div>
+      ${canUseActivities
+        ? `<div id="english-queue-list">${queueVisible.map(activity => renderEnglishActivityRow(activity, 'queue')).join('') || '<p class="product-missing">Kolejka jest pusta.</p>'}</div>
+          ${queueRest.length ? `<details class="english-more"><summary>Pozostałe aktywności (${queueRest.length})</summary><div>${queueRest.map(activity => renderEnglishActivityRow(activity, 'queue')).join('')}</div></details>` : ''}`
+        : '<div class="banner-warn">Nie można bezpiecznie wyświetlić kolejki. Popraw dane przez kopię zapasową; zawartość nie została zmieniona.</div>'}
+    </section>
+    <section class="card english-add-card" aria-labelledby="english-add-title">
+      <h2 id="english-add-title">Dodaj aktywność</h2>
+      <p class="product-supporting-copy">Zapisz własny temat, cel i opcjonalny materiał.</p>
+      <div id="english-activity-form"></div>
+    </section>
+    <section class="card english-profile-card" aria-labelledby="english-profile-title">
+      <h2 id="english-profile-title">Profil</h2>
       <div id="english-profile-content"></div>
-    </div>
-    <div class="card">
-      <h3>📚 Aktywności Angielskiego</h3>
-      <p>Ręcznie wybierasz najwyżej jedną bieżącą aktywność. Moduł nie generuje treści ani nie sprawdza automatycznie jakości materiałów.</p>
-      <div id="english-activities-content"></div>
-    </div>
-  `;
+    </section>
+    <details class="card english-history-panel">
+      <summary><span>Historia</span><span class="badge">${history.length}</span></summary>
+      <div id="english-history-list">${canUseActivities
+        ? `${historyVisible.map(activity => renderEnglishActivityRow(activity, 'history')).join('') || '<p class="product-missing">Historia jest pusta.</p>'}
+          ${historyRest.length ? `<details class="english-more"><summary>Starsze wpisy (${historyRest.length})</summary><div>${historyRest.map(activity => renderEnglishActivityRow(activity, 'history')).join('')}</div></details>` : ''}`
+        : '<p class="product-missing">Historia jest chwilowo niedostępna.</p>'}</div>
+    </details>
+  </div>`;
 
   const profileHost = container.querySelector('#english-profile-content');
   if (!profileIsValid) {
     renderEnglishProfileForm(module, container, profileHost, profile);
   } else {
-    profileHost.innerHTML = `
-      <div class="field-row">
-        <span class="badge ${profile.enabled ? 'ok' : 'warn'}">${profile.enabled ? 'Moduł aktywny' : 'Moduł wyłączony'}</span>
-        <span class="badge">Poziom: ${escapeHtml(ENGLISH_LEVEL_LABELS[profile.selfAssessedLevel])}</span>
-        <span class="badge">${profile.weeklyMinutes} min/tydz. — informacyjnie</span>
-        <span class="badge">${escapeHtml(ENGLISH_FOCUS_LABELS[profile.focus])}</span>
+    profileHost.innerHTML = `<dl class="english-profile-summary">
+        <div><dt>Stan</dt><dd>${profile.enabled ? 'Włączony' : 'Wyłączony'}</dd></div>
+        <div><dt>Poziom</dt><dd>${escapeHtml(ENGLISH_LEVEL_LABELS[profile.selfAssessedLevel])}</dd></div>
+        <div><dt>Czas tygodniowo</dt><dd>${profile.weeklyMinutes} min</dd></div>
+        <div><dt>Kierunek</dt><dd>${escapeHtml(ENGLISH_FOCUS_LABELS[profile.focus])}</dd></div>
+      </dl>
+      <div class="field-row english-checkbox-field">
+        <input type="checkbox" id="english-enabled-toggle" ${profile.enabled ? 'checked' : ''}>
+        <label for="english-enabled-toggle">Angielski jest włączony</label>
       </div>
-      <div class="field-row">
-        <label style="width:auto;display:flex;gap:6px;align-items:center;">
-          <input type="checkbox" id="english-enabled-toggle" ${profile.enabled ? 'checked' : ''}> aktywny
-        </label>
-        <button class="ghost" id="english-profile-edit">Edytuj profil</button>
-      </div>
-      <div id="english-profile-toggle-errors" style="display:none;color:#f87171;font-size:12px;"></div>
-    `;
+      <button type="button" class="ghost" id="english-profile-edit">Edytuj profil</button>
+      <div class="log-errors" id="english-profile-toggle-errors" role="alert" aria-live="polite" hidden></div>`;
     profileHost.querySelector('#english-enabled-toggle').addEventListener('change', event => {
       const result = module.setEnabled(event.target.checked);
       if (!result.ok) {
@@ -618,45 +738,40 @@ function renderEnglishModuleView(module, container) {
         renderEnglishErrors(profileHost.querySelector('#english-profile-toggle-errors'), result.errors);
         return;
       }
-      refreshEnglishAfterMutation(module, container, result);
+      restoreEnglishFocusAfterMutation(container, result, '#english-enabled-toggle');
     });
     profileHost.querySelector('#english-profile-edit').addEventListener('click', () => {
-      renderEnglishProfileForm(module, container, profileHost, profile);
+      renderEnglishProfileForm(module, container, profileHost, profile, true);
     });
   }
 
-  const activitiesHost = container.querySelector('#english-activities-content');
-  if (!activitiesCheck.valid) {
-    activitiesHost.innerHTML = `
-      <div class="banner-warn">Dane english:activities są niepoprawne. Mutacje zostały zablokowane, aby nie nadpisać istniejącej zawartości. MVP nie wykonuje automatycznej naprawy.</div>
-      <div class="log">${activitiesCheck.errors.map(error => `<div>${escapeHtml(error)}</div>`).join('')}</div>
-    `;
-    return;
-  }
+  const activityFormHost = container.querySelector('#english-activity-form');
+  if (canUseActivities) renderEnglishActivityForm(module, container, activityFormHost, null);
+  else activityFormHost.innerHTML = '<p class="product-missing">Dodawanie jest zablokowane, aby nie nadpisać istniejących danych.</p>';
 
-  const current = activities.find(activity => activity.current) || null;
-  const queued = activities.filter(activity => activity.status === 'todo' && !activity.current);
-  const history = activities.filter(activity => activity.status === 'done' || activity.status === 'skipped');
-  activitiesHost.innerHTML = `
-    <div id="english-activity-form"></div>
-    <div id="english-action-errors" style="display:none;color:#f87171;font-size:12px;margin:8px 0;"></div>
-    <div class="pillar-tag" style="margin:14px 0 6px;">Bieżąca aktywność</div>
-    <div id="english-current-list">${current ? renderEnglishActivityRow(current, 'current') : '<p style="color:var(--text3);font-size:12px;">Brak bieżącej aktywności — wybierz ją ręcznie z kolejki.</p>'}</div>
-    <div class="pillar-tag" style="margin:14px 0 6px;">Kolejka (${queued.length})</div>
-    <div id="english-queue-list">${queued.map(activity => renderEnglishActivityRow(activity, 'queue')).join('') || '<p style="color:var(--text3);font-size:12px;">Kolejka jest pusta.</p>'}</div>
-    <div class="pillar-tag" style="margin:14px 0 6px;">Historia (${history.length})</div>
-    <div id="english-history-list">${history.map(activity => renderEnglishActivityRow(activity, 'history')).join('') || '<p style="color:var(--text3);font-size:12px;">Brak historii.</p>'}</div>
-  `;
-  renderEnglishActivityForm(module, container, activitiesHost.querySelector('#english-activity-form'), null);
+  container.querySelector('#english-add-current-material')?.addEventListener('click', () => {
+    renderEnglishActivityForm(module, container, activityFormHost, current, '#english-activity-url');
+  });
+  container.querySelector('#english-go-profile')?.addEventListener('click', () => focusEnglishControl(container, '#english-profile-enabled'));
+  container.querySelector('#english-enable-primary')?.addEventListener('click', () => {
+    const result = module.setEnabled(true);
+    if (!result.ok) return renderEnglishErrors(container.querySelector('#english-action-errors'), result.errors);
+    restoreEnglishFocusAfterMutation(container, result, '#english-enabled-toggle');
+  });
+  container.querySelector('#english-go-queue')?.addEventListener('click', () => {
+    const firstAction = container.querySelector('#english-queue-list [data-english-action="current"]');
+    focusEnglishElement(firstAction);
+  });
+  container.querySelector('#english-go-add')?.addEventListener('click', () => focusEnglishControl(container, '#english-activity-title'));
 
-  activitiesHost.querySelectorAll('[data-english-action]').forEach(button => {
+  container.querySelectorAll('[data-english-action]').forEach(button => {
     button.addEventListener('click', () => {
       const card = button.closest('[data-english-id]');
       const activityId = card.dataset.englishId;
-      const activity = activities.find(item => item.id === activityId);
+      const activity = safeActivities.find(item => item.id === activityId);
       const action = button.dataset.englishAction;
       if (action === 'edit') {
-        renderEnglishActivityForm(module, container, activitiesHost.querySelector('#english-activity-form'), activity);
+        renderEnglishActivityForm(module, container, activityFormHost, activity, '#english-activity-title');
         return;
       }
       let result;
@@ -664,10 +779,25 @@ function renderEnglishModuleView(module, container) {
       else if (action === 'delete') result = module.deleteActivity(activityId);
       else result = module.setTaskStatus(activityId, action);
       if (!result.ok) {
-        renderEnglishErrors(activitiesHost.querySelector('#english-action-errors'), result.errors);
+        renderEnglishErrors(container.querySelector('#english-action-errors'), result.errors);
         return;
       }
-      refreshEnglishAfterMutation(module, container, result);
+      const focusAfterAction = () => {
+        if (action === 'current' || card.dataset.englishContext === 'current') {
+          return focusEnglishControl(container, '#english-current-title');
+        }
+        if (action === 'todo') {
+          const restored = findEnglishActivityCard(container, activityId);
+          return focusEnglishElement(restored?.querySelector('[data-english-action="current"]') || restored);
+        }
+        if (action === 'delete') {
+          return card.dataset.englishContext === 'history'
+            ? focusEnglishControl(container, '.english-history-panel > summary')
+            : focusEnglishControl(container, '#english-queue-title');
+        }
+        focusEnglishControl(container, '#english-current-title');
+      };
+      restoreEnglishFocusAfterMutation(container, result, focusAfterAction);
     });
   });
 }

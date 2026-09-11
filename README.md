@@ -6,7 +6,7 @@ The current release is a twelve-file static bundle: `index.html` loads `src/styl
 
 ## Current status
 
-- Application milestone: Step 11.4B3 product Training and School views implemented, pending independent audit
+- Application milestone: Step 11.4B4 product IT Learning and English views implemented, pending independent audit
 - Quality infrastructure: repeatable Node-based tests and GitHub Actions are available for independent audit
 - Data schema: `DATA_VERSION = 7`
 - Backup format: `personal-os-v2-backup`, version 1
@@ -18,9 +18,9 @@ The current release is a twelve-file static bundle: `index.html` loads `src/styl
 - Product Today hierarchy with actionable warnings, check-in or saved energy, a dominant Now task, ordered Next tasks, compact budget, habits, completed work, and progressive plan details
 - Independent habits and streak tracking
 - Product Training flow with the current session and primary action first, readable weekly days and measurement types, safety notices, expandable exercise instructions and materials, labelled logging, and history
-- IT learning roadmap with stages, criteria, and LessonGuide content
+- Product IT Learning flow with the current stage, next criterion, honest LessonGuide sections and primary action first, followed by an accessible expandable roadmap and advanced guide management
 - Product School flow with overview, urgent work, deadlines, and lesson plan before fully labelled add forms, without exposing numeric priorities and with school-year/vacation modes preserved
-- English profile and a manual queue with at most one current activity
+- Product English flow ordered as current activity, progressively disclosed manual queue, labelled creation form, profile, and collapsed history, with at most one current activity
 - Weekly free-time intervals and date exceptions in AvailabilityEngine v1
 - Explicit local planning dates, integer Task priorities, planning classes, and privacy-minimal task-pool change events
 - Pure deterministic PlanDayEngine with energy, availability windows, atomic best-fit allocation, domain fairness, and closed planning reasons
@@ -60,7 +60,7 @@ Tests execute the real `index.html`, `src/core.js`, `src/today.js`, `src/trainin
 
 PlanDayEngine remains pure: it does not persist plans, emit events, register as a module, or mutate tasks. The production Today view calls its `getPlanForToday` facade exactly once per render and uses that one result for the product hierarchy, `completedToday`, and the dynamic header context. Completion and undo delegate once to the owning module. “Open details” uses only the safe projected `moduleId` and the existing in-memory Router; it neither reads tasks again nor creates a URL or placeholder resource. The compatibility `DecisionEngine` remains available for existing contracts but no longer drives production Today planning. Today refreshes only after the approved budget, check-in, task-pool, Availability, backup-import, local-midnight, and changed-day foreground signals.
 
-The Product UI changes in Training and School are presentation-only. Training and School keep their existing Store namespaces, domain operations, task projections, priorities, planning classes, events, vacation rules, and lesson/load calculations. Rendering uses native disclosure controls and explicit labels while leaving `DATA_VERSION`, migrations, and the backup contract unchanged.
+The Product UI changes in Training, School, IT Learning, and English are presentation-only. These modules keep their existing Store namespaces, domain operations, task projections, priorities, planning classes, events, roadmap reconciliation, status machines, and calculations. Learning now presents the current criterion and LessonGuide before its expandable roadmap; English presents the current activity before its progressively disclosed queue and history. Rendering uses native disclosure controls and explicit labels while leaving `DATA_VERSION`, migrations, and the backup contract unchanged.
 
 All fixtures and test records are synthetic. Tests do not load exported user backups, real browser data, or network resources.
 

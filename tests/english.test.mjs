@@ -638,3 +638,176 @@ test('UI escapuje treść, ponownie waliduje link, nie uruchamia sieci i usuwa d
   assert.deepEqual(toPlain(module.getActivities()), []);
   assert.equal(storeEvents.length, 1);
 });
+
+test('produktowy widok English ma wymaganą hierarchię i uczciwe stany pusty, częściowy oraz pełny', async t => {
+  const app = await loadApp();
+  t.after(() => app.close());
+  const module = app.api.EnglishModule;
+  const container = app.document.getElementById('view-english');
+
+  setEnglishState(app, null, []);
+  module.render(container);
+  const layout = container.querySelector('.english-product-layout');
+  assert.deepEqual([...layout.children].map(element => {
+    if (element.classList.contains('english-current-card')) return 'current';
+    if (element.classList.contains('english-queue-card')) return 'queue';
+    if (element.classList.contains('english-add-card')) return 'add';
+    if (element.classList.contains('english-profile-card')) return 'profile';
+    return 'history';
+  }), ['current', 'queue', 'add', 'profile', 'history']);
+  assert.equal(layout.querySelector('.english-history-panel').open, false);
+  assert.equal(layout.querySelectorAll('.english-current-card .primary').length, 1);
+  assert.match(layout.querySelector('.english-current-card').textContent, /Brak bieżącej aktywności/);
+  assert.doesNotMatch(layout.textContent, /MVP|priorytet|\btodo\b|\bdone\b|\bskipped\b/i);
+
+  const partialActivity = englishActivity({ id: 'english-partial', current: true, resourceUrl: null });
+  setEnglishState(app, englishProfile(), [partialActivity]);
+  module.render(container);
+  const partial = container.querySelector('.english-current-card');
+  assert.match(partial.textContent, /Po co/);
+  assert.match(partial.textContent, /Nie dodano jeszcze materiału/);
+  assert.match(partial.textContent, /nie zawiera osobnej instrukcji/i);
+  assert.match(partial.textContent, /nie zawiera osobnego ćwiczenia/i);
+  assert.match(partial.textContent, /Kryterium ukończenia/);
+  assert.equal(partial.querySelectorAll('.product-primary-action .primary').length, 1);
+
+  const fullActivity = englishActivity({ id: 'english-full', current: true, resourceUrl: 'https://example.test/synthetic-full' });
+  setEnglishState(app, englishProfile(), [fullActivity]);
+  module.render(container);
+  const primary = container.querySelector('.english-current-card .product-primary-action a');
+  assert.equal(primary.href, 'https://example.test/synthetic-full');
+  assert.equal(primary.target, '_blank');
+  assert.equal(primary.rel, 'noopener noreferrer');
+  assert.equal(container.querySelectorAll('.english-current-card .product-primary-action .primary').length, 1);
+});
+
+test('długa kolejka i historia English używają disclosure bez zapisów ani zdarzeń', async t => {
+  const app = await loadApp();
+  t.after(() => app.close());
+  const module = app.api.EnglishModule;
+  const queue = Array.from({ length: 10 }, (_, index) => englishActivity({
+    id: `english-queue-${index}`,
+    title: `Synthetic queue ${index}`
+  }));
+  const history = Array.from({ length: 10 }, (_, index) => englishActivity({
+    id: `english-history-${index}`,
+    title: `Synthetic history ${index}`,
+    status: index % 2 ? 'skipped' : 'done',
+    completedDate: index % 2 ? null : '2026-08-20'
+  }));
+  setEnglishState(app, englishProfile(), [...queue, ...history]);
+  const container = app.document.getElementById('view-english');
+  module.render(container);
+
+  assert.equal(container.querySelectorAll('#english-queue-list [data-english-id]').length, 6);
+  assert.equal(container.querySelectorAll('.english-queue-card .english-more [data-english-id]').length, 4);
+  assert.equal(container.querySelector('.english-history-panel').open, false);
+  assert.ok(container.querySelector('.english-history-panel .english-more'));
+
+  let writes = 0;
+  let events = 0;
+  const originalSet = app.api.Store.set;
+  const originalEmit = app.api.EventBus.emit;
+  app.api.Store.set = (...args) => { writes += 1; return originalSet(...args); };
+  app.api.EventBus.emit = (...args) => { events += 1; return originalEmit(...args); };
+  container.querySelector('.english-queue-card .english-more > summary').click();
+  container.querySelector('.english-history-panel > summary').click();
+  container.querySelector('.english-history-panel .english-more > summary').click();
+  assert.equal(writes, 0);
+  assert.equal(events, 0);
+  app.api.Store.set = originalSet;
+  app.api.EventBus.emit = originalEmit;
+});
+
+test('mutacje English przenoszą fokus deterministycznie i usunięcie bieżącej nie promuje kolejnej', async t => {
+  const app = await loadApp();
+  t.after(() => app.close());
+  const module = app.api.EnglishModule;
+  const current = englishActivity({ id: 'english-focus-current', current: true, resourceUrl: null });
+  const queued = englishActivity({ id: 'english-focus-queued', title: 'Synthetic queued focus' });
+  const nextQueued = englishActivity({ id: 'english-focus-next', title: 'Synthetic next queued focus' });
+  setEnglishState(app, englishProfile(), [current, queued, nextQueued]);
+  const container = app.document.getElementById('view-english');
+  module.render(container);
+
+  const toggle = container.querySelector('#english-enabled-toggle');
+  toggle.checked = false;
+  toggle.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  assert.equal(app.document.activeElement, container.querySelector('#english-enabled-toggle'));
+  container.querySelector('#english-enabled-toggle').checked = true;
+  container.querySelector('#english-enabled-toggle').dispatchEvent(new app.window.Event('change', { bubbles: true }));
+  assert.equal(app.document.activeElement, container.querySelector('#english-enabled-toggle'));
+
+  container.querySelector('#english-add-current-material').click();
+  assert.equal(app.document.activeElement, container.querySelector('#english-activity-url'));
+  container.querySelector('#english-activity-url').value = 'https://example.test/edited-material';
+  container.querySelector('.english-activity-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  assert.equal(app.document.activeElement.dataset.englishAction, 'edit');
+
+  container.querySelector('.english-current-card [data-english-action="done"]').click();
+  assert.equal(app.document.activeElement, container.querySelector('#english-current-title'));
+  const queuedCard = [...container.querySelectorAll('[data-english-id]')]
+    .find(card => card.dataset.englishId === queued.id);
+  queuedCard.querySelector('[data-english-action="current"]').click();
+  assert.equal(app.document.activeElement, container.querySelector('#english-current-title'));
+
+  app.dialogs.enqueueConfirm(true);
+  container.querySelector('.english-current-card [data-english-action="delete"]').click();
+  assert.equal(app.document.activeElement, container.querySelector('#english-current-title'));
+  assert.equal(module.getActivities().some(activity => activity.current), false);
+  assert.equal(module.getActivities().find(activity => activity.id === nextQueued.id).current, false);
+
+  const historyRestore = [...container.querySelectorAll('.english-history-panel [data-english-id]')]
+    .find(card => card.dataset.englishId === current.id);
+  historyRestore.querySelector('[data-english-action="todo"]').click();
+  assert.equal(app.document.activeElement.dataset.englishId, current.id);
+  assert.equal(container.querySelector('.english-current-card').contains(app.document.activeElement), true);
+  container.querySelector('.english-current-card [data-english-action="done"]').click();
+
+  container.querySelector('#english-activity-type').value = 'writing';
+  container.querySelector('#english-activity-title').value = 'Synthetic created focus';
+  container.querySelector('#english-activity-objective').value = 'Verify focus after creation';
+  container.querySelector('#english-activity-url').value = '';
+  container.querySelector('#english-activity-minutes').value = '15';
+  container.querySelector('#english-activity-difficulty').value = '2';
+  container.querySelector('.english-activity-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+  assert.equal(app.document.activeElement.dataset.englishAction, 'current');
+  assert.match(app.document.activeElement.closest('[data-english-id]').textContent, /Synthetic created focus/);
+});
+
+test('produkcyjna mutacja profilu i aktywności wykonuje dokładnie jeden render oraz przywraca fokus', async t => {
+  const app = await loadApp();
+  t.after(() => app.close());
+  const module = app.api.EnglishModule;
+  const queued = englishActivity({ id: 'english-single-render', title: 'Synthetic single render' });
+  setEnglishState(app, englishProfile(), [queued]);
+  const container = app.document.getElementById('view-english');
+  module.render(container);
+
+  const originalRender = module.render;
+  let renderCalls = 0;
+  module.render = function instrumentedEnglishRender(target) {
+    renderCalls += 1;
+    return originalRender.call(this, target);
+  };
+  t.after(() => { module.render = originalRender; });
+
+  const oldToggle = container.querySelector('#english-enabled-toggle');
+  oldToggle.checked = false;
+  oldToggle.dispatchEvent(new app.window.Event('change', { bubbles: true }));
+
+  const newToggle = container.querySelector('#english-enabled-toggle');
+  assert.equal(renderCalls, 1, 'mutacja profilu korzysta wyłącznie z renderu domenowego');
+  assert.notEqual(newToggle, oldToggle);
+  assert.equal(app.document.activeElement, newToggle);
+
+  renderCalls = 0;
+  const selectCurrent = [...container.querySelectorAll('[data-english-id]')]
+    .find(card => card.dataset.englishId === queued.id)
+    .querySelector('[data-english-action="current"]');
+  selectCurrent.click();
+
+  assert.equal(renderCalls, 1, 'mutacja aktywności korzysta wyłącznie z tego samego renderu domenowego');
+  assert.equal(module.getActivities().find(activity => activity.id === queued.id).current, true);
+  assert.equal(app.document.activeElement, container.querySelector('#english-current-title'));
+});

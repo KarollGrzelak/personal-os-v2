@@ -544,6 +544,14 @@ function isValidResourceUrl(url) {
 
 const RESOURCE_SOURCE_TYPES = ['documentation', 'article', 'video', 'course', 'community', 'other'];
 const RESOURCE_LANGUAGES = ['pl', 'en', 'other'];
+const RESOURCE_SOURCE_TYPE_LABELS = {
+  documentation: 'Dokumentacja', article: 'Artykuł', video: 'Wideo',
+  course: 'Kurs', community: 'Społeczność', other: 'Inny materiał'
+};
+const RESOURCE_LANGUAGE_LABELS = { pl: 'polski', en: 'angielski', other: 'inny język' };
+const LEARNING_DIFFICULTY_LABELS = {
+  1: 'Bardzo łatwe', 2: 'Łatwe', 3: 'Średnie', 4: 'Trudne', 5: 'Bardzo trudne'
+};
 
 function validateResource(r) {
   const errors = [];
@@ -859,41 +867,73 @@ function renderGuidePanel(criterionId, panelEl) {
   }
 }
 
+function guidePanelControlId(panelEl, name) {
+  return `${panelEl.id || 'lesson-guide'}-${name}`;
+}
+
+function focusGuidePanelControl(panelEl, selector = '[data-guide-primary]') {
+  const target = panelEl.querySelector(selector)
+    || panelEl.querySelector('.learning-guide-advanced > summary')
+    || panelEl;
+  target?.focus();
+}
+
 function renderGuideEmptyState(criterionId, panelEl) {
+  const importId = guidePanelControlId(panelEl, 'import');
+  const importButtonId = guidePanelControlId(panelEl, 'import-button');
+  const manualButtonId = guidePanelControlId(panelEl, 'manual-button');
+  const errorsId = guidePanelControlId(panelEl, 'import-errors');
   panelEl.innerHTML = `
-    <div class="ex-detail" style="margin-top:8px;">
-      <b>Brak przewodnika dla tego kryterium.</b>
-      <p style="font-size:12px;color:var(--text3);margin:6px 0;">Poproś Claude o przygotowanie przewodnika w osobnej rozmowie (aplikacja nie ma dostępu do internetu ani AI), w formacie JSON zgodnym z modelem LessonGuide, a następnie wklej go poniżej. Alternatywnie utwórz przewodnik ręcznie.</p>
-      <textarea id="guide-import-${criterionId}" rows="4" style="width:100%;font-family:monospace;font-size:11px;" placeholder='{"why": "...", "skills": [...], "resources": {...}, ...}'></textarea>
-      <div class="field-row" style="margin-top:6px;">
-        <button class="ghost" id="guide-import-btn-${criterionId}">Importuj z JSON</button>
-        <button class="ghost" id="guide-manual-btn-${criterionId}">Utwórz ręcznie</button>
-      </div>
-      <div class="log-errors" id="guide-import-errors-${criterionId}" style="display:none;color:#f87171;font-size:11px;margin-top:6px;"></div>
+    <div class="learning-guide-empty" role="status">
+      <h3>Materiał do tej lekcji nie jest jeszcze przygotowany</h3>
+      <p>Nie zapisano jeszcze materiału, instrukcji ani ćwiczenia. Możesz uzupełnić przewodnik ręcznie; aplikacja nie wymyśla źródeł ani treści.</p>
+      <button type="button" class="ghost" id="${manualButtonId}" data-guide-primary>Uzupełnij przewodnik</button>
+      <details class="learning-guide-advanced">
+        <summary>Zaawansowane: import danych przewodnika</summary>
+        <div class="learning-guide-advanced-body">
+          <label for="${importId}">Dane LessonGuide w formacie JSON</label>
+          <textarea id="${importId}" rows="6" placeholder='{"why": "...", "skills": [], "resources": {}, "workOrder": [], "exercises": []}' aria-describedby="${errorsId}"></textarea>
+          <button type="button" class="ghost" id="${importButtonId}">Importuj JSON</button>
+          <div class="log-errors" id="${errorsId}" role="alert" aria-live="polite" hidden></div>
+        </div>
+      </details>
     </div>
   `;
-  panelEl.querySelector(`#guide-import-btn-${criterionId}`).addEventListener('click', () => {
-    const text = panelEl.querySelector(`#guide-import-${criterionId}`).value;
+  panelEl.querySelector(`#${importButtonId}`).addEventListener('click', () => {
+    const text = panelEl.querySelector(`#${importId}`).value;
     const result = importLessonGuideFromJson(criterionId, text);
-    const errEl = panelEl.querySelector(`#guide-import-errors-${criterionId}`);
+    const errEl = panelEl.querySelector(`#${errorsId}`);
     if (!result.ok) {
-      errEl.style.display = 'block';
+      errEl.hidden = false;
       errEl.textContent = (result.errors || []).join(' | ');
+      errEl.focus();
       return;
     }
     renderGuidePanel(criterionId, panelEl);
+    focusGuidePanelControl(panelEl);
   });
-  panelEl.querySelector(`#guide-manual-btn-${criterionId}`).addEventListener('click', () => {
+  panelEl.querySelector(`#${manualButtonId}`).addEventListener('click', () => {
     renderGuideEditForm(criterionId, null, panelEl);
   });
 }
 
 function renderGuideView(criterionId, guide, panelEl) {
-  const statusLabel = guide.status === 'reviewed' ? '✅ sprawdzone' : '📝 szkic';
-  const updatedLabel = guide.updatedAt ? new Date(guide.updatedAt).toLocaleString('pl-PL') : '—';
-  const sourcesLabel = guide.sourcesCheckedAt ? new Date(guide.sourcesCheckedAt).toLocaleString('pl-PL') : 'źródła nigdy nie sprawdzone';
-  const migratedNote = guide.migratedAt ? `<div class="pillar-tag">Zmigrowano ze starego formatu: ${escapeHtml(new Date(guide.migratedAt).toLocaleString('pl-PL'))} (data utworzenia oryginału nieznana)</div>` : '';
-  const critIdAttr = escapeAttr(criterionId);
+  const content = normalizeLessonGuide(guide, criterionId);
+  const statusLabel = guide.status === 'reviewed' ? 'Treść przejrzana' : 'Wersja robocza';
+  const updatedLabel = isValidIsoTimestamp(guide.updatedAt) ? new Date(guide.updatedAt).toLocaleString('pl-PL') : 'brak daty';
+  const sourcesLabel = isValidIsoTimestamp(guide.sourcesCheckedAt) ? new Date(guide.sourcesCheckedAt).toLocaleString('pl-PL') : 'nie potwierdzono';
+  const migratedNote = isValidIsoTimestamp(guide.migratedAt)
+    ? `<p>Odzyskano ze starszego formatu ${escapeHtml(new Date(guide.migratedAt).toLocaleString('pl-PL'))}; pierwotna data utworzenia jest nieznana.</p>`
+    : '';
+  const editButtonId = guidePanelControlId(panelEl, 'edit');
+  const reviewButtonId = guidePanelControlId(panelEl, 'review');
+  const sourcesButtonId = guidePanelControlId(panelEl, 'sources');
+  const legacyDeleteButtonId = guidePanelControlId(panelEl, 'legacy-delete');
+  const legacyConfirmId = guidePanelControlId(panelEl, 'legacy-confirm');
+  const legacyConfirmButtonId = guidePanelControlId(panelEl, 'legacy-confirm-button');
+  const importId = guidePanelControlId(panelEl, 'replace-import');
+  const importButtonId = guidePanelControlId(panelEl, 'replace-import-button');
+  const importErrorsId = guidePanelControlId(panelEl, 'replace-import-errors');
 
   // Resource.url przechodzi walidację również NA RENDERZE (obrona
   // w głębi — nie tylko przy zapisie): jeśli z jakiegoś powodu
@@ -901,76 +941,142 @@ function renderGuideView(criterionId, guide, panelEl) {
   // sprzed tej poprawki, ręczna ingerencja w Store), link nie jest
   // w ogóle renderowany jako klikalny link, tylko jako sam,
   // zawsze bezpiecznie zescape'owany tekst.
-  const resGroup = (label, list) => list.length ? `
-    <div class="ex-detail"><b>${escapeHtml(label)}</b>
-      ${list.map(r => {
+  const resourceGroups = [
+    ['Dokumentacja', content.resources.documentation],
+    ['Artykuły', content.resources.articles],
+    ['Wideo', content.resources.videos],
+    ['Dodatkowe', content.resources.additional]
+  ];
+  const allResources = resourceGroups.flatMap(([label, list]) => (Array.isArray(list) ? list : [])
+    .filter(resource => resource && typeof resource === 'object')
+    .map(resource => ({ label, resource })));
+  const resourcesMarkup = allResources.length
+    ? `<ul class="learning-resource-list">${allResources.map(({ label, resource: r }) => {
         const titleSafe = escapeHtml(r.title);
-        const metaSafe = `(${escapeHtml(r.sourceType)}, ${escapeHtml(r.language)}, sprawdzono: ${escapeHtml(r.checkedDate)})`;
+        const sourceLabel = RESOURCE_SOURCE_TYPE_LABELS[r.sourceType] || label;
+        const languageLabel = RESOURCE_LANGUAGE_LABELS[r.language] || 'język nieokreślony';
+        const metaSafe = `${escapeHtml(sourceLabel)} · ${escapeHtml(languageLabel)} · sprawdzono ${escapeHtml(r.checkedDate || 'brak daty')}`;
         const linkOrText = isValidResourceUrl(r.url)
-          ? `<a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">${titleSafe}</a>`
-          : `${titleSafe} <span style="color:#f87171;">(nieprawidłowy URL)</span>`;
-        return `<div style="font-size:12px;margin:2px 0;">• ${linkOrText} ${metaSafe}</div>`;
-      }).join('')}
-    </div>` : '';
+          ? `<a href="${escapeAttr(r.url)}" target="_blank" rel="noopener noreferrer">${titleSafe}</a>`
+          : `<span>${titleSafe}</span><strong class="learning-missing-inline">Link zablokowano: nieprawidłowy URL materiału.</strong>`;
+        return `<li>${linkOrText}<small>${metaSafe}</small></li>`;
+      }).join('')}</ul>`
+    : '<p class="learning-missing">Nie zapisano materiału do otwarcia.</p>';
+  const workOrder = content.workOrder.filter(step => step && typeof step === 'object');
+  const exercises = content.exercises.filter(exercise => exercise && typeof exercise === 'object');
+  const selfTest = content.selfTest.filter(question => question && typeof question === 'object');
 
   panelEl.innerHTML = `
-    <div class="ex-detail" style="margin-top:8px;">
-      <div class="field-row">
-        <span class="badge ${guide.status === 'reviewed' ? 'ok' : 'warn'}">${statusLabel}</span>
-        <span class="pillar-tag">Aktualizacja: ${escapeHtml(updatedLabel)}</span>
-        <span class="pillar-tag">Źródła: ${escapeHtml(sourcesLabel)}</span>
-      </div>
-      ${migratedNote}
-      ${guide.why ? `<div class="ex-detail"><b>Dlaczego</b>${escapeHtml(guide.why)}</div>` : ''}
-      ${guide.skills.length ? `<div class="ex-detail"><b>Umiejętności</b>${guide.skills.map(escapeHtml).join(' · ')}</div>` : ''}
-      ${guide.prerequisites.length ? `<div class="ex-detail"><b>Wymagania wstępne</b>${guide.prerequisites.map(escapeHtml).join(' · ')}</div>` : ''}
-      ${resGroup('Dokumentacja', guide.resources.documentation)}
-      ${resGroup('Artykuły', guide.resources.articles)}
-      ${resGroup('Wideo', guide.resources.videos)}
-      ${resGroup('Dodatkowe', guide.resources.additional)}
-      ${guide.workOrder.length ? `<div class="ex-detail"><b>Kolejność pracy</b>${guide.workOrder.slice().sort((a,b) => a.order - b.order).map(s => `<div style="font-size:12px;">${s.order + 1}. <b>${escapeHtml(s.title)}</b> — ${escapeHtml(s.description)}</div>`).join('')}</div>` : ''}
-      ${guide.exercises.length ? `<div class="ex-detail"><b>Ćwiczenia</b>${guide.exercises.map(e => `<div style="font-size:12px;">• ${escapeHtml(e.title)}${e.difficulty ? ' (trudność ' + escapeHtml(String(e.difficulty)) + ')' : ''} — ${escapeHtml(e.description)}</div>`).join('')}</div>` : ''}
-      ${guide.miniProject ? `<div class="ex-detail"><b>Mini-projekt</b><div style="font-size:12px;"><b>${escapeHtml(guide.miniProject.title)}</b> — ${escapeHtml(guide.miniProject.description)}${guide.miniProject.acceptanceCriteria.length ? '<br>Kryteria akceptacji: ' + guide.miniProject.acceptanceCriteria.map(escapeHtml).join(' · ') : ''}</div></div>` : ''}
-      ${guide.selfTest.length ? `<div class="ex-detail"><b>Self-test</b>${guide.selfTest.map(q => `<div style="font-size:12px;">• ${escapeHtml(q.prompt)}${q.answer ? ' <span style="color:var(--text3);">(odp: ' + escapeHtml(q.answer) + ')</span>' : ''}</div>`).join('')}</div>` : ''}
-      ${guide.commonMistakes.length ? `<div class="ex-detail"><b>Typowe błędy</b>${guide.commonMistakes.map(m => `<div style="font-size:12px;">• ${escapeHtml(m)}</div>`).join('')}</div>` : ''}
-      ${guide.legacyContent !== undefined ? `
-        <div class="ex-detail" style="border-top:1px dashed var(--border);padding-top:8px;margin-top:8px;">
-          <b>Stara treść (sprzed formalizacji modelu)</b>
-          <pre style="font-size:10px;white-space:pre-wrap;background:rgba(0,0,0,0.2);padding:8px;border-radius:6px;">${escapeHtml(JSON.stringify(guide.legacyContent, null, 2))}</pre>
-          <button class="ghost" id="guide-legacy-del-btn-${critIdAttr}" style="margin-top:6px;">Usuń starą treść</button>
-          <div id="guide-legacy-confirm-${critIdAttr}" style="display:none;margin-top:6px;">
-            <span style="color:#f87171;font-size:12px;">Na pewno? Tej operacji nie można cofnąć.</span>
-            <button class="ghost" id="guide-legacy-confirm-btn-${critIdAttr}">Potwierdź usunięcie</button>
+    <div class="learning-guide-content">
+      <section class="learning-guide-block" data-guide-section="purpose" tabindex="-1">
+        <h3>Po co się tego uczysz</h3>
+        ${content.why ? `<p>${escapeHtml(content.why)}</p>` : '<p class="learning-missing">Nie zapisano osobnego wyjaśnienia dla tej lekcji.</p>'}
+        ${content.skills.length ? `<p class="learning-guide-support"><strong>Rozwijane umiejętności:</strong> ${content.skills.map(escapeHtml).join(' · ')}</p>` : ''}
+        ${content.prerequisites.length ? `<p class="learning-guide-support"><strong>Przed rozpoczęciem:</strong> ${content.prerequisites.map(escapeHtml).join(' · ')}</p>` : ''}
+      </section>
+      <section class="learning-guide-block" data-guide-section="material" tabindex="-1">
+        <h3>Materiał do otwarcia</h3>
+        ${resourcesMarkup}
+      </section>
+      <section class="learning-guide-block" data-guide-section="instruction" tabindex="-1">
+        <h3>Instrukcja wykonania</h3>
+        ${workOrder.length
+          ? `<ol class="learning-step-list">${workOrder.slice().sort((a, b) => Number(a.order) - Number(b.order)).map(step => `<li><strong>${escapeHtml(step.title)}</strong><span>${escapeHtml(step.description)}</span></li>`).join('')}</ol>`
+          : '<p class="learning-missing">Nie zapisano jeszcze kolejności wykonania.</p>'}
+      </section>
+      <section class="learning-guide-block" data-guide-section="exercise" tabindex="-1">
+        <h3>Ćwiczenie praktyczne</h3>
+        ${exercises.length
+          ? `<ul class="learning-exercise-list">${exercises.map(exercise => `<li><strong>${escapeHtml(exercise.title)}</strong>${exercise.difficulty ? `<small>${escapeHtml(LEARNING_DIFFICULTY_LABELS[exercise.difficulty] || `Trudność ${exercise.difficulty}`)}</small>` : ''}<span>${escapeHtml(exercise.description)}</span></li>`).join('')}</ul>`
+          : '<p class="learning-missing">Nie zapisano jeszcze ćwiczenia praktycznego.</p>'}
+        ${content.miniProject && typeof content.miniProject === 'object' ? `<div class="learning-mini-project"><strong>${escapeHtml(content.miniProject.title)}</strong><p>${escapeHtml(content.miniProject.description)}</p>${Array.isArray(content.miniProject.acceptanceCriteria) && content.miniProject.acceptanceCriteria.length ? `<p><b>Kryteria akceptacji:</b> ${content.miniProject.acceptanceCriteria.map(escapeHtml).join(' · ')}</p>` : ''}</div>` : ''}
+      </section>
+      <section class="learning-guide-block" data-guide-section="self-test" tabindex="-1">
+        <h3>Sprawdź się</h3>
+        ${selfTest.length
+          ? `<ul class="learning-question-list">${selfTest.map(question => `<li>${escapeHtml(question.prompt)}${question.answer ? `<details><summary>Pokaż odpowiedź</summary><p>${escapeHtml(question.answer)}</p></details>` : ''}</li>`).join('')}</ul>`
+          : '<p class="learning-missing">Nie zapisano pytań sprawdzających.</p>'}
+        ${content.commonMistakes.length ? `<p class="learning-guide-support"><strong>Uważaj na:</strong> ${content.commonMistakes.map(escapeHtml).join(' · ')}</p>` : ''}
+      </section>
+      <details class="learning-guide-advanced">
+        <summary>Zaawansowane zarządzanie przewodnikiem</summary>
+        <div class="learning-guide-advanced-body">
+          <div class="learning-guide-meta">
+            <span class="badge ${guide.status === 'reviewed' ? 'ok' : 'warn'}">${escapeHtml(statusLabel)}</span>
+            <span>Aktualizacja: ${escapeHtml(updatedLabel)}</span>
+            <span>Sprawdzenie źródeł: ${escapeHtml(sourcesLabel)}</span>
           </div>
-        </div>` : ''}
-      <div class="field-row" style="margin-top:10px;">
-        <button class="ghost" id="guide-edit-btn-${critIdAttr}">Edytuj</button>
-        ${guide.status === 'draft' ? `<button class="ghost" id="guide-review-btn-${critIdAttr}">Oznacz jako sprawdzone</button>` : ''}
-        <button class="ghost" id="guide-sources-btn-${critIdAttr}">Potwierdź sprawdzenie źródeł dzisiaj</button>
-      </div>
+          ${migratedNote}
+          <div class="learning-guide-actions">
+            <button type="button" class="ghost" id="${editButtonId}" data-guide-primary>Edytuj przewodnik</button>
+            ${guide.status === 'draft' ? `<button type="button" class="ghost" id="${reviewButtonId}">Oznacz treść jako przejrzaną</button>` : ''}
+            <button type="button" class="ghost" id="${sourcesButtonId}">Potwierdź dzisiejsze sprawdzenie źródeł</button>
+          </div>
+          <div class="learning-guide-import">
+            <label for="${importId}">Zastąp treść danymi LessonGuide w formacie JSON</label>
+            <textarea id="${importId}" rows="6" aria-describedby="${importErrorsId}"></textarea>
+            <button type="button" class="ghost" id="${importButtonId}">Importuj JSON</button>
+            <div class="log-errors" id="${importErrorsId}" role="alert" aria-live="polite" hidden></div>
+          </div>
+          ${guide.legacyContent !== undefined ? `
+            <div class="learning-legacy-content">
+              <h4>Odzyskana stara treść</h4>
+              <pre>${escapeHtml(JSON.stringify(guide.legacyContent, null, 2))}</pre>
+              <button type="button" class="ghost" id="${legacyDeleteButtonId}">Usuń odzyskaną treść</button>
+              <div id="${legacyConfirmId}" hidden>
+                <p>Na pewno? Tej operacji nie można cofnąć.</p>
+                <button type="button" class="ghost" id="${legacyConfirmButtonId}">Potwierdź usunięcie</button>
+              </div>
+            </div>` : ''}
+        </div>
+      </details>
     </div>
   `;
 
-  panelEl.querySelector(`#guide-edit-btn-${criterionId}`).addEventListener('click', () => {
+  panelEl.querySelector(`#${editButtonId}`).addEventListener('click', () => {
     renderGuideEditForm(criterionId, guide, panelEl);
   });
-  const reviewBtn = panelEl.querySelector(`#guide-review-btn-${criterionId}`);
+  const reviewBtn = panelEl.querySelector(`#${reviewButtonId}`);
   if (reviewBtn) reviewBtn.addEventListener('click', () => {
     markLessonGuideReviewed(criterionId);
     renderGuidePanel(criterionId, panelEl);
+    const advanced = panelEl.querySelector('.learning-guide-advanced');
+    if (advanced) advanced.open = true;
+    focusGuidePanelControl(panelEl, `#${sourcesButtonId}`);
   });
-  panelEl.querySelector(`#guide-sources-btn-${criterionId}`).addEventListener('click', () => {
+  panelEl.querySelector(`#${sourcesButtonId}`).addEventListener('click', () => {
     confirmSourcesChecked(criterionId);
     renderGuidePanel(criterionId, panelEl);
+    const advanced = panelEl.querySelector('.learning-guide-advanced');
+    if (advanced) advanced.open = true;
+    focusGuidePanelControl(panelEl, `#${guidePanelControlId(panelEl, 'sources')}`);
   });
-  const legacyDelBtn = panelEl.querySelector(`#guide-legacy-del-btn-${criterionId}`);
+  panelEl.querySelector(`#${importButtonId}`).addEventListener('click', () => {
+    const result = importLessonGuideFromJson(criterionId, panelEl.querySelector(`#${importId}`).value);
+    const errorElement = panelEl.querySelector(`#${importErrorsId}`);
+    if (!result.ok) {
+      errorElement.hidden = false;
+      errorElement.textContent = (result.errors || []).join(' | ');
+      return;
+    }
+    renderGuidePanel(criterionId, panelEl);
+    const advanced = panelEl.querySelector('.learning-guide-advanced');
+    if (advanced) advanced.open = true;
+    focusGuidePanelControl(panelEl);
+  });
+  const legacyDelBtn = panelEl.querySelector(`#${legacyDeleteButtonId}`);
   if (legacyDelBtn) legacyDelBtn.addEventListener('click', () => {
-    panelEl.querySelector(`#guide-legacy-confirm-${criterionId}`).style.display = 'block';
+    const confirmation = panelEl.querySelector(`#${legacyConfirmId}`);
+    confirmation.hidden = false;
+    panelEl.querySelector(`#${legacyConfirmButtonId}`)?.focus();
   });
-  const legacyConfirmBtn = panelEl.querySelector(`#guide-legacy-confirm-btn-${criterionId}`);
+  const legacyConfirmBtn = panelEl.querySelector(`#${legacyConfirmButtonId}`);
   if (legacyConfirmBtn) legacyConfirmBtn.addEventListener('click', () => {
     deleteLegacyContent(criterionId);
     renderGuidePanel(criterionId, panelEl);
+    const advanced = panelEl.querySelector('.learning-guide-advanced');
+    if (advanced) advanced.open = true;
+    focusGuidePanelControl(panelEl);
   });
 }
 
@@ -978,219 +1084,240 @@ function renderGuideEditForm(criterionId, existingGuide, panelEl) {
   // Stan roboczy WYŁĄCZNIE w pamięci, niezapisany do Store aż do
   // kliknięcia "Zapisz" — Anuluj po prostu wraca do renderGuidePanel
   // bez żadnego zapisu.
-  const state = existingGuide ? {
-    why: existingGuide.why,
-    skills: existingGuide.skills.slice(),
-    prerequisites: existingGuide.prerequisites.slice(),
+  const normalized = normalizeLessonGuide(existingGuide, criterionId);
+  const state = {
+    why: normalized.why,
+    skills: normalized.skills.slice(),
+    prerequisites: normalized.prerequisites.slice(),
     resources: {
-      documentation: existingGuide.resources.documentation.slice(),
-      articles: existingGuide.resources.articles.slice(),
-      videos: existingGuide.resources.videos.slice(),
-      additional: existingGuide.resources.additional.slice()
+      documentation: normalized.resources.documentation.slice(),
+      articles: normalized.resources.articles.slice(),
+      videos: normalized.resources.videos.slice(),
+      additional: normalized.resources.additional.slice()
     },
-    workOrder: existingGuide.workOrder.slice(),
-    exercises: existingGuide.exercises.slice(),
-    miniProject: existingGuide.miniProject ? { ...existingGuide.miniProject, acceptanceCriteria: existingGuide.miniProject.acceptanceCriteria.slice() } : null,
-    selfTest: existingGuide.selfTest.slice(),
-    commonMistakes: existingGuide.commonMistakes.slice()
-  } : {
-    why: '', skills: [], prerequisites: [],
-    resources: { documentation: [], articles: [], videos: [], additional: [] },
-    workOrder: [], exercises: [], miniProject: null, selfTest: [], commonMistakes: []
+    workOrder: normalized.workOrder.slice(),
+    exercises: normalized.exercises.slice(),
+    miniProject: normalized.miniProject && typeof normalized.miniProject === 'object'
+      ? { ...normalized.miniProject, acceptanceCriteria: Array.isArray(normalized.miniProject.acceptanceCriteria) ? normalized.miniProject.acceptanceCriteria.slice() : [] }
+      : null,
+    selfTest: normalized.selfTest.slice(),
+    commonMistakes: normalized.commonMistakes.slice()
   };
 
   const RESOURCE_GROUPS = [['documentation', 'Dokumentacja'], ['articles', 'Artykuły'], ['videos', 'Wideo'], ['additional', 'Dodatkowe']];
+  const fieldId = name => guidePanelControlId(panelEl, `edit-${name}`);
+  const field = name => panelEl.querySelector(`#${fieldId(name)}`);
 
-  function renderForm() {
+  function renderForm(focusSelector = null) {
+    const errorsId = fieldId('errors');
     panelEl.innerHTML = `
-      <div class="ex-detail" style="margin-top:8px;">
-        <label style="font-size:11px;color:var(--text3);">Dlaczego</label>
-        <textarea id="f-why" rows="2" style="width:100%;">${escapeHtml(state.why)}</textarea>
-
-        <label style="font-size:11px;color:var(--text3);">Umiejętności (oddziel przecinkami)</label>
-        <input type="text" id="f-skills" style="width:100%;" value="${escapeAttr(state.skills.join(', '))}">
-
-        <label style="font-size:11px;color:var(--text3);">Wymagania wstępne (oddziel przecinkami)</label>
-        <input type="text" id="f-prereq" style="width:100%;" value="${escapeAttr(state.prerequisites.join(', '))}">
+      <form class="learning-guide-form" aria-describedby="${errorsId}">
+        <div class="learning-section-heading">
+          <div><p class="learning-eyebrow">Edycja treści</p><h3>${existingGuide ? 'Edytuj przewodnik' : 'Utwórz przewodnik'}</h3></div>
+        </div>
+        <div class="learning-form-field learning-form-wide">
+          <label for="${fieldId('why')}">Po co użytkownik uczy się tego tematu</label>
+          <textarea id="${fieldId('why')}" rows="3">${escapeHtml(state.why)}</textarea>
+        </div>
+        <div class="learning-form-field">
+          <label for="${fieldId('skills')}">Rozwijane umiejętności (oddziel przecinkami)</label>
+          <input type="text" id="${fieldId('skills')}" value="${escapeAttr(state.skills.join(', '))}">
+        </div>
+        <div class="learning-form-field">
+          <label for="${fieldId('prerequisites')}">Wymagania wstępne (oddziel przecinkami)</label>
+          <input type="text" id="${fieldId('prerequisites')}" value="${escapeAttr(state.prerequisites.join(', '))}">
+        </div>
 
         ${RESOURCE_GROUPS.map(([key, label]) => `
-          <div style="margin-top:8px;">
-            <label style="font-size:11px;color:var(--text3);">${label}</label>
+          <fieldset class="learning-repeatable learning-form-wide">
+            <legend>${label}</legend>
             ${state.resources[key].map((r, i) => `
-              <div class="field-row" style="font-size:11px;">
-                <span>${escapeHtml(r.title)} — ${escapeHtml(r.url)} (${escapeHtml(r.sourceType)}, ${escapeHtml(r.language)}, ${escapeHtml(r.checkedDate)})</span>
-                <button class="mini-btn" data-remove-res="${key}:${i}">usuń</button>
+              <div class="learning-repeatable-row">
+                <span>${escapeHtml(r.title)} — ${escapeHtml(r.url)}</span>
+                <button type="button" class="mini-btn" data-remove-res="${key}:${i}" aria-label="Usuń materiał: ${escapeAttr(r.title)}">Usuń</button>
               </div>
             `).join('')}
-            <div class="field-row">
-              <input type="text" placeholder="tytuł" id="f-res-title-${key}" style="width:120px;">
-              <input type="text" placeholder="https://..." id="f-res-url-${key}" style="width:160px;">
-              <select id="f-res-type-${key}">${RESOURCE_SOURCE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
-              <select id="f-res-lang-${key}">${RESOURCE_LANGUAGES.map(l => `<option value="${l}">${l}</option>`).join('')}</select>
-              <input type="date" id="f-res-date-${key}" value="${localDateKey()}">
-              <button class="ghost" data-add-res="${key}">+ dodaj</button>
+            <div class="learning-repeatable-grid">
+              <div class="learning-form-field"><label for="${fieldId(`resource-title-${key}`)}">Tytuł</label><input type="text" id="${fieldId(`resource-title-${key}`)}"></div>
+              <div class="learning-form-field"><label for="${fieldId(`resource-url-${key}`)}">Adres HTTP lub HTTPS</label><input type="url" id="${fieldId(`resource-url-${key}`)}" placeholder="https://..."></div>
+              <div class="learning-form-field"><label for="${fieldId(`resource-type-${key}`)}">Rodzaj źródła</label><select id="${fieldId(`resource-type-${key}`)}">${RESOURCE_SOURCE_TYPES.map(type => `<option value="${type}">${RESOURCE_SOURCE_TYPE_LABELS[type]}</option>`).join('')}</select></div>
+              <div class="learning-form-field"><label for="${fieldId(`resource-language-${key}`)}">Język</label><select id="${fieldId(`resource-language-${key}`)}">${RESOURCE_LANGUAGES.map(language => `<option value="${language}">${RESOURCE_LANGUAGE_LABELS[language]}</option>`).join('')}</select></div>
+              <div class="learning-form-field"><label for="${fieldId(`resource-date-${key}`)}">Data sprawdzenia</label><input type="date" id="${fieldId(`resource-date-${key}`)}" value="${localDateKey()}"></div>
+              <button type="button" class="ghost" data-add-res="${key}">Dodaj materiał</button>
             </div>
-          </div>
+          </fieldset>
         `).join('')}
 
-        <div style="margin-top:8px;">
-          <label style="font-size:11px;color:var(--text3);">Kolejność pracy</label>
+        <fieldset class="learning-repeatable learning-form-wide">
+          <legend>Instrukcja wykonania</legend>
           ${state.workOrder.map((s, i) => `
-            <div class="field-row" style="font-size:11px;">
+            <div class="learning-repeatable-row">
               <span>${i + 1}. ${escapeHtml(s.title)} — ${escapeHtml(s.description)}</span>
-              <button class="mini-btn" data-remove-step="${i}">usuń</button>
+              <button type="button" class="mini-btn" data-remove-step="${i}">Usuń</button>
             </div>
           `).join('')}
-          <div class="field-row">
-            <input type="text" placeholder="tytuł kroku" id="f-step-title" style="width:140px;">
-            <input type="text" placeholder="opis" id="f-step-desc" style="width:200px;">
-            <button class="ghost" id="f-step-add">+ dodaj krok</button>
+          <div class="learning-repeatable-grid">
+            <div class="learning-form-field"><label for="${fieldId('step-title')}">Tytuł kroku</label><input type="text" id="${fieldId('step-title')}"></div>
+            <div class="learning-form-field"><label for="${fieldId('step-description')}">Opis kroku</label><input type="text" id="${fieldId('step-description')}"></div>
+            <button type="button" class="ghost" id="${fieldId('step-add')}">Dodaj krok</button>
           </div>
-        </div>
+        </fieldset>
 
-        <div style="margin-top:8px;">
-          <label style="font-size:11px;color:var(--text3);">Ćwiczenia</label>
+        <fieldset class="learning-repeatable learning-form-wide">
+          <legend>Ćwiczenie praktyczne</legend>
           ${state.exercises.map((e, i) => `
-            <div class="field-row" style="font-size:11px;">
-              <span>${escapeHtml(e.title)}${e.difficulty ? ' (trudność ' + escapeHtml(String(e.difficulty)) + ')' : ''} — ${escapeHtml(e.description)}</span>
-              <button class="mini-btn" data-remove-ex="${i}">usuń</button>
+            <div class="learning-repeatable-row">
+              <span>${escapeHtml(e.title)}${e.difficulty ? ` (${escapeHtml(LEARNING_DIFFICULTY_LABELS[e.difficulty] || `trudność ${e.difficulty}`)})` : ''} — ${escapeHtml(e.description)}</span>
+              <button type="button" class="mini-btn" data-remove-ex="${i}">Usuń</button>
             </div>
           `).join('')}
-          <div class="field-row">
-            <input type="text" placeholder="tytuł" id="f-ex-title" style="width:120px;">
-            <input type="text" placeholder="opis" id="f-ex-desc" style="width:160px;">
-            <select id="f-ex-diff"><option value="">bez trudności</option>${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
-            <button class="ghost" id="f-ex-add">+ dodaj ćwiczenie</button>
+          <div class="learning-repeatable-grid">
+            <div class="learning-form-field"><label for="${fieldId('exercise-title')}">Tytuł ćwiczenia</label><input type="text" id="${fieldId('exercise-title')}"></div>
+            <div class="learning-form-field"><label for="${fieldId('exercise-description')}">Opis ćwiczenia</label><input type="text" id="${fieldId('exercise-description')}"></div>
+            <div class="learning-form-field"><label for="${fieldId('exercise-difficulty')}">Trudność (opcjonalnie)</label><select id="${fieldId('exercise-difficulty')}"><option value="">Bez oceny</option>${[1,2,3,4,5].map(value => `<option value="${value}">${LEARNING_DIFFICULTY_LABELS[value]}</option>`).join('')}</select></div>
+            <button type="button" class="ghost" id="${fieldId('exercise-add')}">Dodaj ćwiczenie</button>
           </div>
-        </div>
+        </fieldset>
 
-        <div style="margin-top:8px;">
-          <label style="font-size:11px;color:var(--text3);">Mini-projekt (opcjonalny)</label>
-          <input type="text" placeholder="tytuł" id="f-mp-title" style="width:100%;" value="${state.miniProject ? escapeAttr(state.miniProject.title) : ''}">
-          <input type="text" placeholder="opis" id="f-mp-desc" style="width:100%;" value="${state.miniProject ? escapeAttr(state.miniProject.description) : ''}">
-          <input type="text" placeholder="kryteria akceptacji (oddziel przecinkami)" id="f-mp-ac" style="width:100%;" value="${state.miniProject ? escapeAttr(state.miniProject.acceptanceCriteria.join(', ')) : ''}">
-        </div>
+        <fieldset class="learning-repeatable learning-form-wide">
+          <legend>Mini-projekt (opcjonalnie)</legend>
+          <div class="learning-repeatable-grid">
+            <div class="learning-form-field"><label for="${fieldId('project-title')}">Tytuł</label><input type="text" id="${fieldId('project-title')}" value="${state.miniProject ? escapeAttr(state.miniProject.title) : ''}"></div>
+            <div class="learning-form-field"><label for="${fieldId('project-description')}">Opis</label><input type="text" id="${fieldId('project-description')}" value="${state.miniProject ? escapeAttr(state.miniProject.description) : ''}"></div>
+            <div class="learning-form-field learning-form-wide"><label for="${fieldId('project-acceptance')}">Kryteria akceptacji (oddziel przecinkami)</label><input type="text" id="${fieldId('project-acceptance')}" value="${state.miniProject ? escapeAttr(state.miniProject.acceptanceCriteria.join(', ')) : ''}"></div>
+          </div>
+        </fieldset>
 
-        <div style="margin-top:8px;">
-          <label style="font-size:11px;color:var(--text3);">Self-test</label>
+        <fieldset class="learning-repeatable learning-form-wide">
+          <legend>Pytania sprawdzające</legend>
           ${state.selfTest.map((q, i) => `
-            <div class="field-row" style="font-size:11px;">
+            <div class="learning-repeatable-row">
               <span>${escapeHtml(q.prompt)}${q.answer ? ' (odp: ' + escapeHtml(q.answer) + ')' : ''}</span>
-              <button class="mini-btn" data-remove-q="${i}">usuń</button>
+              <button type="button" class="mini-btn" data-remove-q="${i}">Usuń</button>
             </div>
           `).join('')}
-          <div class="field-row">
-            <input type="text" placeholder="pytanie" id="f-q-prompt" style="width:160px;">
-            <input type="text" placeholder="odpowiedź (opcjonalnie)" id="f-q-answer" style="width:160px;">
-            <button class="ghost" id="f-q-add">+ dodaj pytanie</button>
+          <div class="learning-repeatable-grid">
+            <div class="learning-form-field"><label for="${fieldId('question-prompt')}">Pytanie</label><input type="text" id="${fieldId('question-prompt')}"></div>
+            <div class="learning-form-field"><label for="${fieldId('question-answer')}">Odpowiedź (opcjonalnie)</label><input type="text" id="${fieldId('question-answer')}"></div>
+            <button type="button" class="ghost" id="${fieldId('question-add')}">Dodaj pytanie</button>
           </div>
-        </div>
+        </fieldset>
 
-        <label style="font-size:11px;color:var(--text3);margin-top:8px;display:block;">Typowe błędy (jeden na linię)</label>
-        <textarea id="f-mistakes" rows="2" style="width:100%;">${escapeHtml(state.commonMistakes.join('\n'))}</textarea>
-
-        <div class="field-row" style="margin-top:10px;">
-          <button class="ghost" id="f-save">Zapisz</button>
-          <button class="ghost" id="f-cancel">Anuluj</button>
+        <div class="learning-form-field learning-form-wide">
+          <label for="${fieldId('mistakes')}">Typowe błędy (jeden na linię)</label>
+          <textarea id="${fieldId('mistakes')}" rows="3">${escapeHtml(state.commonMistakes.join('\n'))}</textarea>
         </div>
-        <div class="log-errors" id="f-errors" style="display:none;color:#f87171;font-size:11px;margin-top:6px;"></div>
-      </div>
+        <div class="learning-form-actions learning-form-wide">
+          <button type="submit" class="primary" id="${fieldId('save')}">Zapisz przewodnik</button>
+          <button type="button" class="ghost" id="${fieldId('cancel')}">Anuluj</button>
+        </div>
+        <div class="log-errors learning-form-wide" id="${errorsId}" role="alert" aria-live="polite" hidden></div>
+      </form>
     `;
 
-    panelEl.querySelector('#f-why').addEventListener('input', e => { state.why = e.target.value; });
-    panelEl.querySelector('#f-skills').addEventListener('input', e => { state.skills = e.target.value.split(',').map(s => s.trim()).filter(Boolean); });
-    panelEl.querySelector('#f-prereq').addEventListener('input', e => { state.prerequisites = e.target.value.split(',').map(s => s.trim()).filter(Boolean); });
-    panelEl.querySelector('#f-mistakes').addEventListener('input', e => { state.commonMistakes = e.target.value.split('\n').map(s => s.trim()).filter(Boolean); });
+    field('why').addEventListener('input', event => { state.why = event.target.value; });
+    field('skills').addEventListener('input', event => { state.skills = event.target.value.split(',').map(value => value.trim()).filter(Boolean); });
+    field('prerequisites').addEventListener('input', event => { state.prerequisites = event.target.value.split(',').map(value => value.trim()).filter(Boolean); });
+    field('mistakes').addEventListener('input', event => { state.commonMistakes = event.target.value.split('\n').map(value => value.trim()).filter(Boolean); });
 
     panelEl.querySelectorAll('[data-remove-res]').forEach(btn => {
       btn.addEventListener('click', () => {
         const [key, idx] = btn.dataset.removeRes.split(':');
         state.resources[key].splice(Number(idx), 1);
-        renderForm();
+        renderForm(`[data-add-res="${key}"]`);
       });
     });
     RESOURCE_GROUPS.forEach(([key]) => {
       const addBtn = panelEl.querySelector(`[data-add-res="${key}"]`);
       addBtn.addEventListener('click', () => {
-        const title = panelEl.querySelector(`#f-res-title-${key}`).value.trim();
-        const url = panelEl.querySelector(`#f-res-url-${key}`).value.trim();
-        const sourceType = panelEl.querySelector(`#f-res-type-${key}`).value;
-        const language = panelEl.querySelector(`#f-res-lang-${key}`).value;
-        const checkedDate = panelEl.querySelector(`#f-res-date-${key}`).value;
+        const title = field(`resource-title-${key}`).value.trim();
+        const url = field(`resource-url-${key}`).value.trim();
+        const sourceType = field(`resource-type-${key}`).value;
+        const language = field(`resource-language-${key}`).value;
+        const checkedDate = field(`resource-date-${key}`).value;
         const candidate = { id: genGuideId('res'), title, url, sourceType, language, checkedDate };
         const v = validateResource(candidate);
-        const errEl = panelEl.querySelector('#f-errors');
-        if (!v.valid) { errEl.style.display = 'block'; errEl.textContent = v.errors.join(' | '); return; }
-        errEl.style.display = 'none';
+        const errEl = field('errors');
+        if (!v.valid) { errEl.hidden = false; errEl.textContent = v.errors.join(' | '); return; }
         state.resources[key].push(candidate);
-        renderForm();
+        renderForm(`[data-add-res="${key}"]`);
       });
     });
 
     panelEl.querySelectorAll('[data-remove-step]').forEach(btn => {
-      btn.addEventListener('click', () => { state.workOrder.splice(Number(btn.dataset.removeStep), 1); renderForm(); });
+      btn.addEventListener('click', () => { state.workOrder.splice(Number(btn.dataset.removeStep), 1); renderForm(`#${fieldId('step-add')}`); });
     });
-    panelEl.querySelector('#f-step-add').addEventListener('click', () => {
-      const title = panelEl.querySelector('#f-step-title').value.trim();
-      const description = panelEl.querySelector('#f-step-desc').value.trim();
+    field('step-add').addEventListener('click', () => {
+      const title = field('step-title').value.trim();
+      const description = field('step-description').value.trim();
       if (!title) return;
       state.workOrder.push({ id: genGuideId('step'), order: state.workOrder.length, title, description });
-      renderForm();
+      renderForm(`#${fieldId('step-add')}`);
     });
 
     panelEl.querySelectorAll('[data-remove-ex]').forEach(btn => {
-      btn.addEventListener('click', () => { state.exercises.splice(Number(btn.dataset.removeEx), 1); renderForm(); });
+      btn.addEventListener('click', () => { state.exercises.splice(Number(btn.dataset.removeEx), 1); renderForm(`#${fieldId('exercise-add')}`); });
     });
-    panelEl.querySelector('#f-ex-add').addEventListener('click', () => {
-      const title = panelEl.querySelector('#f-ex-title').value.trim();
-      const description = panelEl.querySelector('#f-ex-desc').value.trim();
-      const diffVal = panelEl.querySelector('#f-ex-diff').value;
+    field('exercise-add').addEventListener('click', () => {
+      const title = field('exercise-title').value.trim();
+      const description = field('exercise-description').value.trim();
+      const diffVal = field('exercise-difficulty').value;
       if (!title) return;
       const ex = { id: genGuideId('ex'), title, description };
       if (diffVal) ex.difficulty = Number(diffVal);
       state.exercises.push(ex);
-      renderForm();
+      renderForm(`#${fieldId('exercise-add')}`);
     });
 
     panelEl.querySelectorAll('[data-remove-q]').forEach(btn => {
-      btn.addEventListener('click', () => { state.selfTest.splice(Number(btn.dataset.removeQ), 1); renderForm(); });
+      btn.addEventListener('click', () => { state.selfTest.splice(Number(btn.dataset.removeQ), 1); renderForm(`#${fieldId('question-add')}`); });
     });
-    panelEl.querySelector('#f-q-add').addEventListener('click', () => {
-      const prompt = panelEl.querySelector('#f-q-prompt').value.trim();
-      const answer = panelEl.querySelector('#f-q-answer').value.trim();
+    field('question-add').addEventListener('click', () => {
+      const prompt = field('question-prompt').value.trim();
+      const answer = field('question-answer').value.trim();
       if (!prompt) return;
       const q = { id: genGuideId('q'), prompt };
       if (answer) q.answer = answer;
       state.selfTest.push(q);
-      renderForm();
+      renderForm(`#${fieldId('question-add')}`);
     });
 
-    panelEl.querySelector('#f-mp-title').addEventListener('input', e => {
+    field('project-title').addEventListener('input', e => {
       if (!state.miniProject) state.miniProject = { title: '', description: '', acceptanceCriteria: [] };
       state.miniProject.title = e.target.value;
     });
-    panelEl.querySelector('#f-mp-desc').addEventListener('input', e => {
+    field('project-description').addEventListener('input', e => {
       if (!state.miniProject) state.miniProject = { title: '', description: '', acceptanceCriteria: [] };
       state.miniProject.description = e.target.value;
     });
-    panelEl.querySelector('#f-mp-ac').addEventListener('input', e => {
+    field('project-acceptance').addEventListener('input', e => {
       if (!state.miniProject) state.miniProject = { title: '', description: '', acceptanceCriteria: [] };
       state.miniProject.acceptanceCriteria = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
     });
 
-    panelEl.querySelector('#f-cancel').addEventListener('click', () => {
+    field('cancel').addEventListener('click', () => {
       renderGuidePanel(criterionId, panelEl);
+      const advanced = panelEl.querySelector('.learning-guide-advanced');
+      if (advanced) advanced.open = true;
+      focusGuidePanelControl(panelEl);
     });
-    panelEl.querySelector('#f-save').addEventListener('click', () => {
+    panelEl.querySelector('.learning-guide-form').addEventListener('submit', event => {
+      event.preventDefault();
       // Mini-projekt zapisujemy tylko, jeśli ma choć tytuł — pusty
       // formularz mini-projektu nie tworzy pustego obiektu w danych.
       const content = { ...state };
-      if (state.miniProject && !state.miniProject.title.trim()) content.miniProject = undefined;
+      if (!state.miniProject || !state.miniProject.title.trim()) content.miniProject = undefined;
       const result = saveLessonGuide(criterionId, content);
-      const errEl = panelEl.querySelector('#f-errors');
-      if (!result.ok) { errEl.style.display = 'block'; errEl.textContent = result.errors.join(' | '); return; }
+      const errEl = field('errors');
+      if (!result.ok) { errEl.hidden = false; errEl.textContent = result.errors.join(' | '); return; }
       renderGuidePanel(criterionId, panelEl);
+      const advanced = panelEl.querySelector('.learning-guide-advanced');
+      if (advanced) advanced.open = true;
+      focusGuidePanelControl(panelEl);
     });
+
+    const focusTarget = focusSelector ? panelEl.querySelector(focusSelector) : field('why');
+    focusTarget?.focus();
   }
 
   renderForm();
@@ -1264,128 +1391,181 @@ const LearningModule = {
   render(container) {
     const statuses = RoadmapEngine.getStageStatuses();
     const overall = RoadmapEngine.getOverallProgress();
+    const activeStage = RoadmapEngine.getActiveStage();
+    const activeCriterion = activeStage
+      ? activeStage.criteria.find(criterion => !RoadmapEngine.isCriterionDone(criterion.id)) || null
+      : null;
+    const currentGuide = activeCriterion ? getLessonGuide(activeCriterion.id) : null;
+    const currentGuideContent = currentGuide ? normalizeLessonGuide(currentGuide, activeCriterion.id) : null;
+    const currentResources = currentGuideContent
+      ? ['documentation', 'articles', 'videos', 'additional']
+          .flatMap(key => currentGuideContent.resources[key])
+          .filter(resource => validateResource(resource).valid)
+      : [];
+    const primaryResource = currentResources[0] || null;
 
-    container.innerHTML = `
-      <div class="card">
-        <h3>🗺️ Droga do pierwszej pracy w IT</h3>
-        <div class="field-row" style="margin-bottom:14px;">
-          <span class="badge ok">${overall.done}/${overall.total} etapów ukończonych</span>
-          <span class="badge">${overall.percent}% całej roadmapy</span>
-        </div>
-        <div id="roadmap-tree"></div>
-      </div>
-    `;
-
-    const treeEl = container.querySelector('#roadmap-tree');
-
-    const renderTree = () => {
-      const statusesNow = RoadmapEngine.getStageStatuses();
-      treeEl.innerHTML = ROADMAP_STAGES.map(stage => {
-        const status = statusesNow[stage.id];
-        const progress = RoadmapEngine.getProgress(stage.id);
-        const icon = status === 'done' ? '✓' : status === 'active' ? '●' : '🔒';
-        const statusClass = status === 'done' ? 'ok' : status === 'active' ? '' : '';
-        return `
-          <div class="stage-card ${status}" data-stage="${stage.id}">
-            <div class="stage-head">
-              <span class="stage-icon">${icon}</span>
-              <span class="stage-name">${stage.order}. ${stage.name}</span>
-              <span class="badge ${statusClass}">${status === 'locked' ? 'zablokowany' : progress + '%'}</span>
-            </div>
-            <div class="stage-body" style="display:none;"></div>
-          </div>
-        `;
-      }).join('');
-
-      treeEl.querySelectorAll('.stage-card').forEach(card => {
-        const stageId = card.dataset.stage;
-        card.querySelector('.stage-head').addEventListener('click', () => {
-          const body = card.querySelector('.stage-body');
-          const isOpen = body.style.display !== 'none';
-          treeEl.querySelectorAll('.stage-body').forEach(b => b.style.display = 'none');
-          if (!isOpen) { body.style.display = 'block'; renderStageDetail(stageId, body); }
-        });
-      });
+    const focusAfterRender = selector => {
+      const target = container.querySelector(selector);
+      target?.focus();
     };
+    const stageCardFor = stageId => Array.from(container.querySelectorAll('[data-stage]'))
+      .find(card => card.dataset.stage === stageId);
+    const criterionCheckboxFor = criterionId => Array.from(container.querySelectorAll('[data-criterion-checkbox]'))
+      .find(input => input.dataset.criterionCheckbox === criterionId);
 
-    const renderStageDetail = (stageId, bodyEl) => {
-      const stage = RoadmapEngine.getStage(stageId);
-      const status = RoadmapEngine.getStageStatuses()[stageId];
-      const progress = RoadmapEngine.getProgress(stageId);
+    const currentMarkup = !activeStage
+      ? `<section class="card learning-current-card learning-complete-state" aria-labelledby="learning-current-title">
+          <p class="product-eyebrow">Teraz</p>
+          <h2 id="learning-current-title" tabindex="-1">Roadmapa ukończona</h2>
+          <p>Wszystkie etapy drogi do pierwszej pracy w IT są zamknięte.</p>
+        </section>`
+      : activeCriterion
+        ? `<section class="card learning-current-card" aria-labelledby="learning-current-title">
+            <p class="product-eyebrow">Bieżąca lekcja · etap ${activeStage.order}</p>
+            <h2 id="learning-current-title" tabindex="-1">${escapeHtml(activeCriterion.title)}</h2>
+            <div class="product-meta" aria-label="Plan lekcji">
+              <span>${escapeHtml(activeStage.name)}</span>
+              <span>${activeCriterion.estimatedMinutes} min</span>
+              <span>${escapeHtml(LEARNING_DIFFICULTY_LABELS[activeCriterion.difficulty] || `Trudność ${activeCriterion.difficulty}`)}</span>
+            </div>
+            <section class="learning-current-purpose" aria-labelledby="learning-current-purpose-title">
+              <h3 id="learning-current-purpose-title">Po co teraz</h3>
+              <p>${escapeHtml(activeStage.why)}</p>
+            </section>
+            <div class="product-primary-action">
+              ${primaryResource
+                ? `<a class="primary primary-link" href="${escapeAttr(primaryResource.url)}" target="_blank" rel="noopener noreferrer">Otwórz materiał: ${escapeHtml(primaryResource.title)}</a>`
+                : currentGuideContent && currentGuideContent.workOrder.length
+                  ? '<button type="button" class="primary" id="learning-start-instruction">Zacznij od instrukcji</button>'
+                  : '<button type="button" class="primary" id="learning-create-current-guide">Uzupełnij przewodnik</button>'}
+            </div>
+            <div class="guide-panel learning-current-guide" id="learning-current-guide-${escapeAttr(activeCriterion.id)}" data-guide-criterion="${escapeAttr(activeCriterion.id)}"></div>
+            <section class="learning-completion" aria-labelledby="learning-completion-title">
+              <h3 id="learning-completion-title">Kryterium ukończenia</h3>
+              <p>Oznacz lekcję jako ukończoną dopiero, gdy potrafisz samodzielnie wykonać: <strong>${escapeHtml(activeCriterion.title)}</strong>.</p>
+              <button type="button" class="ghost" id="learning-complete-current">Oznacz lekcję jako ukończoną</button>
+            </section>
+          </section>`
+        : `<section class="card learning-current-card" aria-labelledby="learning-current-title">
+            <p class="product-eyebrow">Bieżący etap · etap ${activeStage.order}</p>
+            <h2 id="learning-current-title" tabindex="-1">${escapeHtml(activeStage.name)}</h2>
+            <p>Wszystkie lekcje tego etapu są ukończone. Został ręczny test zaliczeniowy.</p>
+            <section class="learning-completion" aria-labelledby="learning-stage-test-title">
+              <h3 id="learning-stage-test-title">Test zaliczeniowy</h3>
+              <p>${escapeHtml(activeStage.finalTest)}</p>
+              <button type="button" class="primary" id="learning-complete-stage-current">Zamknij etap</button>
+              <div class="log-errors" id="learning-stage-errors" role="alert" aria-live="polite" hidden></div>
+            </section>
+          </section>`;
 
-      if (status === 'locked') {
-        const prereqNames = stage.prerequisites.map(id => RoadmapEngine.getStage(id)?.name).join(', ') || '—';
-        bodyEl.innerHTML = `<p class="ex-detail">🔒 Zablokowane. Wymaga ukończenia: <b>${prereqNames}</b></p>`;
+    const roadmapMarkup = ROADMAP_STAGES.map(stage => {
+      const status = statuses[stage.id];
+      const progress = RoadmapEngine.getProgress(stage.id);
+      const stateLabel = status === 'done' ? 'Ukończony' : status === 'active' ? 'Bieżący' : 'Zablokowany';
+      const prereqNames = stage.prerequisites
+        .map(id => RoadmapEngine.getStage(id)?.name)
+        .filter(Boolean)
+        .join(', ') || 'poprzedniego etapu';
+      const body = status === 'locked'
+        ? `<p class="learning-lock-note">Ten etap otworzy się po ukończeniu: <strong>${escapeHtml(prereqNames)}</strong>.</p>`
+        : `<div class="stage-overview">
+            <p>${escapeHtml(stage.description)}</p>
+            <dl>
+              <div><dt>Po co</dt><dd>${escapeHtml(stage.why)}</dd></div>
+              <div><dt>Szacowany czas</dt><dd>${stage.estimatedHours} h</dd></div>
+              <div><dt>Umiejętności</dt><dd>${stage.skillsGained.map(escapeHtml).join(' · ')}</dd></div>
+              ${stage.projects.length ? `<div><dt>Projekty</dt><dd>${stage.projects.map(escapeHtml).join(' · ')}</dd></div>` : ''}
+            </dl>
+            <div class="learning-criteria-list">
+              ${stage.criteria.map(criterion => {
+                const done = RoadmapEngine.isCriterionDone(criterion.id);
+                const isCurrent = activeCriterion?.id === criterion.id;
+                return `<div class="learning-criterion ${done ? 'done' : ''}">
+                    <div class="learning-criterion-row">
+                      <input type="checkbox" class="cb" id="crit-${escapeAttr(criterion.id)}" data-criterion-checkbox="${escapeAttr(criterion.id)}" ${done ? 'checked' : ''} ${status !== 'active' ? 'disabled' : ''}>
+                      <label for="crit-${escapeAttr(criterion.id)}">${escapeHtml(criterion.title)}</label>
+                      <span class="learning-criterion-time">${criterion.estimatedMinutes} min</span>
+                    </div>
+                    ${isCurrent
+                      ? `<button type="button" class="guide-toggle-btn ghost" data-crit="${escapeAttr(criterion.id)}" data-jump-current>Przejdź do bieżącej lekcji</button>`
+                      : `<details class="learning-guide-disclosure">
+                          <summary class="guide-toggle-btn" data-crit="${escapeAttr(criterion.id)}">Przewodnik lekcji</summary>
+                          <div class="guide-panel" id="guide-panel-${escapeAttr(criterion.id)}" data-guide-criterion="${escapeAttr(criterion.id)}"></div>
+                        </details>`}
+                  </div>`;
+              }).join('')}
+            </div>
+            <section class="learning-stage-test">
+              <h4>Test zaliczeniowy etapu</h4>
+              <p>${escapeHtml(stage.finalTest)}</p>
+            </section>
+          </div>`;
+      return `<details class="stage-card ${escapeAttr(status)}" data-stage="${escapeAttr(stage.id)}" ${status === 'active' ? 'open' : ''}>
+          <summary class="stage-head">
+            <span class="stage-name">${stage.order}. ${escapeHtml(stage.name)}</span>
+            <span class="badge ${status === 'done' ? 'ok' : status === 'active' ? 'warn' : ''}">${escapeHtml(stateLabel)} · ${progress}%</span>
+          </summary>
+          <div class="stage-body">${body}</div>
+        </details>`;
+    }).join('');
+
+    container.innerHTML = `<div class="learning-product-layout">
+      ${currentMarkup}
+      <section class="card learning-roadmap-card" aria-labelledby="learning-roadmap-title">
+        <div class="product-section-heading">
+          <div>
+            <p class="product-eyebrow">Pełna ścieżka</p>
+            <h2 id="learning-roadmap-title">Roadmapa IT</h2>
+          </div>
+          <span class="badge ok">${overall.done}/${overall.total} etapów · ${overall.percent}%</span>
+        </div>
+        <div id="roadmap-tree">${roadmapMarkup}</div>
+      </section>
+    </div>`;
+
+    container.querySelectorAll('[data-guide-criterion]').forEach(panel => {
+      renderGuidePanel(panel.dataset.guideCriterion, panel);
+    });
+
+    container.querySelector('#learning-start-instruction')?.addEventListener('click', () => {
+      container.querySelector('.learning-current-guide [data-guide-section="instruction"]')?.focus();
+    });
+    container.querySelector('#learning-create-current-guide')?.addEventListener('click', () => {
+      const panel = container.querySelector('.learning-current-guide');
+      if (panel && activeCriterion) renderGuideEditForm(activeCriterion.id, currentGuide, panel);
+    });
+    container.querySelectorAll('[data-jump-current]').forEach(button => {
+      button.addEventListener('click', () => focusAfterRender('#learning-current-title'));
+    });
+    container.querySelectorAll('[data-criterion-checkbox]').forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        const criterionId = checkbox.dataset.criterionCheckbox;
+        const stage = ROADMAP_STAGES.find(candidate => candidate.criteria.some(criterion => criterion.id === criterionId));
+        LearningModule.setTaskStatus(criterionId, checkbox.checked ? 'done' : 'todo');
+        LearningModule.render(container);
+        const card = stage ? stageCardFor(stage.id) : null;
+        if (card) card.open = true;
+        criterionCheckboxFor(criterionId)?.focus();
+      });
+    });
+    container.querySelector('#learning-complete-current')?.addEventListener('click', () => {
+      if (!activeCriterion) return;
+      LearningModule.setTaskStatus(activeCriterion.id, 'done');
+      LearningModule.render(container);
+      focusAfterRender('#learning-current-title');
+    });
+    container.querySelector('#learning-complete-stage-current')?.addEventListener('click', () => {
+      if (!activeStage) return;
+      const result = RoadmapEngine.completeStage(activeStage.id);
+      if (!result.ok) {
+        const errorElement = container.querySelector('#learning-stage-errors');
+        errorElement.hidden = false;
+        errorElement.textContent = result.reason;
         return;
       }
-
-      bodyEl.innerHTML = `
-        <div class="ex-detail"><b>Opis</b>${stage.description}</div>
-        <div class="ex-detail"><b>Dlaczego teraz</b>${stage.why}</div>
-        <div class="ex-detail"><b>Czego się nauczę</b>${stage.willLearn.join(' · ')}</div>
-        <div class="ex-detail"><b>Umiejętności</b>${stage.skillsGained.join(' · ')}</div>
-        <div class="ex-detail"><b>Szacowany czas</b>${stage.estimatedHours}h</div>
-        ${stage.projects.length ? `<div class="ex-detail"><b>Projekty</b>${stage.projects.join(' · ')}</div>` : ''}
-        <div class="ex-detail"><b>Test zaliczeniowy</b>${stage.finalTest}</div>
-        <div class="pillar-tag" style="margin:10px 0 4px;">Kryteria ukończenia (${progress}%)</div>
-        <div id="criteria-list-${stage.id}"></div>
-        ${status === 'active' ? `<button class="ghost" id="complete-stage-${stage.id}" style="margin-top:10px;">Zamknij etap — test zaliczeniowy zdany</button>
-          <div class="log-errors" id="complete-errors-${stage.id}" style="display:none;color:#f87171;font-size:11px;margin-top:6px;"></div>` : ''}
-      `;
-
-      const critListEl = bodyEl.querySelector(`#criteria-list-${stage.id}`);
-      const renderCriteria = () => {
-        critListEl.innerHTML = stage.criteria.map(c => {
-          const done = RoadmapEngine.isCriterionDone(c.id);
-          return `
-          <div class="item ${done ? 'done' : ''}">
-            <input type="checkbox" class="cb" id="crit-${c.id}" ${done ? 'checked' : ''} ${status !== 'active' ? 'disabled' : ''}>
-            <label for="crit-${c.id}">${c.title}</label>
-            <span class="xptag">+${c.xp} XP</span>
-            <button class="mini-btn guide-toggle-btn" data-crit="${c.id}">📘 Przewodnik</button>
-          </div>
-          <div class="guide-panel" id="guide-panel-${c.id}" style="display:none;"></div>
-        `;
-        }).join('');
-        critListEl.querySelectorAll('.cb').forEach(cb => {
-          cb.addEventListener('change', () => {
-            LearningModule.setTaskStatus(cb.id.replace('crit-', ''), cb.checked ? 'done' : 'todo');
-            renderCriteria();
-            const badge = document.querySelector(`.stage-card[data-stage="${stage.id}"] .stage-head .badge`);
-            if (badge) badge.textContent = RoadmapEngine.getProgress(stage.id) + '%';
-          });
-        });
-        // Panel przewodnika — czysto UI, nigdy nie dotyka getTasks/setTaskStatus
-        // ani statusu kryterium. Toggle otwiera/zamyka panel jednego kryterium
-        // na raz (analogicznie do rozwijania etapu w renderTree wyżej).
-        critListEl.querySelectorAll('.guide-toggle-btn').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const critId = btn.dataset.crit;
-            const panel = critListEl.querySelector(`#guide-panel-${critId}`);
-            const isOpen = panel.style.display !== 'none';
-            critListEl.querySelectorAll('.guide-panel').forEach(p => p.style.display = 'none');
-            if (!isOpen) { panel.style.display = 'block'; renderGuidePanel(critId, panel); }
-          });
-        });
-      };
-      renderCriteria();
-
-      const completeBtn = bodyEl.querySelector(`#complete-stage-${stage.id}`);
-      if (completeBtn) {
-        completeBtn.addEventListener('click', () => {
-          const result = RoadmapEngine.completeStage(stage.id);
-          const errEl = bodyEl.querySelector(`#complete-errors-${stage.id}`);
-          if (!result.ok) {
-            errEl.style.display = 'block';
-            errEl.textContent = result.reason;
-            return;
-          }
-          renderTree(); // pełne odświeżenie — nowy etap mógł się odblokować
-        });
-      }
-    };
-
-    renderTree();
+      LearningModule.render(container);
+      focusAfterRender('#learning-current-title');
+    });
   }
 };
 /* ============================================================

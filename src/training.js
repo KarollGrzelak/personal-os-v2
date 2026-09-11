@@ -257,6 +257,29 @@ function validateLogEntry(measurementType, raw) {
    danych (recenzja Kroku 4, punkt 3).
    ============================================================ */
 const ALLOWED_EXPERIENCE_LEVELS = ['beginner', 'intermediate', 'advanced'];
+const TRAINING_WEEKDAY_LABELS = ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'];
+const TRAINING_WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const TRAINING_MEASUREMENT_LABELS = {
+  weight_reps: 'Ciężar i powtórzenia',
+  bodyweight_reps: 'Powtórzenia z masą ciała',
+  duration: 'Czas utrzymania',
+  mobility: 'Czas mobilności'
+};
+const TRAINING_HISTORY_VISIBLE_LIMIT = 8;
+
+function trainingWeekdaysLabel(weekdays) {
+  return weekdays.map(day => TRAINING_WEEKDAY_LABELS[day] || 'Nieznany dzień').join(', ');
+}
+
+function trainingExercisePrescription(exercise) {
+  const range = exercise.repRangeMin === exercise.repRangeMax
+    ? `${exercise.repRangeMin}`
+    : `${exercise.repRangeMin}–${exercise.repRangeMax}`;
+  const unit = exercise.measurementType === 'duration' || exercise.measurementType === 'mobility'
+    ? 'sek.'
+    : 'powt.';
+  return `${exercise.sets} ${exercise.sets === 1 ? 'seria' : 'serie'} · ${range} ${unit}`;
+}
 
 // Krok 8.1: musi bezpiecznie obsłużyć DOWOLNĄ wartość JSON — backup to
 // niezaufane wejście. Żadna gałąź nie zakłada, że `raw` albo którekolwiek
@@ -720,273 +743,399 @@ const TrainingModule = {
 
   render(container) {
     const todayWeekday = new Date().getDay();
+    const today = localDateKey();
     const profile = this.getProfile();
     const complete = isProfileComplete(profile);
     const plan = this.getActivePlan();
     const scheduledToday = plan.days.find(d => d.weekdays.includes(todayWeekday));
+    const sessions = Store.get('training:sessions', {});
+    const currentTaskId = scheduledToday ? `${scheduledToday.id}:${today}` : null;
+    const currentSession = currentTaskId ? (sessions[currentTaskId] || { status: 'planned' }) : null;
+    const loggedToday = scheduledToday ? this._countLoggedExercisesForDate(scheduledToday, today) : 0;
+    const statusLabels = {
+      planned: 'Zaplanowana',
+      in_progress: 'W trakcie',
+      completed: 'Ukończona',
+      partial: 'Częściowo wykonana',
+      skipped: 'Pominięta'
+    };
+    const statusClasses = { in_progress: 'warn', completed: 'ok', partial: 'warn' };
+    const nextDay = plan.days
+      .map(day => ({
+        day,
+        distance: Math.min(...day.weekdays.map(weekday => {
+          const distance = positiveModulo(weekday - todayWeekday, 7);
+          return distance === 0 ? 7 : distance;
+        }))
+      }))
+      .sort((a, b) => a.distance - b.distance)[0]?.day || null;
+    const mainActionDay = scheduledToday || nextDay || plan.days[0] || null;
+    const mainActionLabel = scheduledToday
+      ? (currentSession.status === 'in_progress' ? 'Kontynuuj sesję'
+        : currentSession.status === 'partial' ? 'Dokończ sesję'
+        : currentSession.status === 'completed' || currentSession.status === 'skipped' ? 'Zobacz sesję'
+        : 'Rozpocznij — pokaż ćwiczenia')
+      : 'Zobacz najbliższą sesję';
 
-    container.innerHTML = `
-      <div class="card">
-        <h3>🏋️ Trening</h3>
-        ${!complete ? `
-          <div class="banner-warn">
-            ⚠ <b>Plan roboczy</b> — ćwiczenia poniżej to sensowny punkt startu dla początkującego, ale NIE są dopasowane do Ciebie.
-            Uzupełnij <button class="link-btn" id="goto-profile">profil treningowy</button>, żeby plan realnie odpowiadał Twojemu sprzętowi, miejscu i poziomowi.
+    const renderExercise = exercise => {
+      const pr = this.getExercisePR(exercise.id);
+      const history = this.getExerciseHistory(exercise.id);
+      const prText = pr
+        ? (pr.type === 'weight' ? `${pr.value} kg` : pr.type === 'reps' ? `${pr.value} powt.` : `${pr.value} s`)
+        : null;
+      const prefix = `training-log-${exercise.id}`;
+      const errorId = `${prefix}-errors`;
+      const measurementLabel = TRAINING_MEASUREMENT_LABELS[exercise.measurementType] || 'Pomiar ćwiczenia';
+      const repetitionField = exercise.measurementType === 'duration' || exercise.measurementType === 'mobility'
+        ? `<div class="training-form-field"><label for="${prefix}-duration">Czas każdej serii w sekundach</label><input type="number" min="1" max="200" id="${prefix}-duration" class="lf-duration" aria-describedby="${errorId}"></div>`
+        : `<div class="training-form-field"><label for="${prefix}-reps">Powtórzenia w każdej serii</label><input type="number" min="1" max="200" id="${prefix}-reps" class="lf-reps" aria-describedby="${errorId}"></div>`;
+      const weightField = exercise.measurementType === 'weight_reps'
+        ? `<div class="training-form-field"><label for="${prefix}-weight">Ciężar w kilogramach</label><input type="number" min="0" max="500" step="0.1" id="${prefix}-weight" class="lf-weight" aria-describedby="${errorId}"></div>`
+        : '';
+      const rpeField = exercise.measurementType !== 'mobility'
+        ? `<div class="training-form-field"><label for="${prefix}-rpe">Odczuwany wysiłek (RPE 1–10)</label><select id="${prefix}-rpe" class="lf-rpe" aria-describedby="${errorId}"><option value="">Nie podaję</option>${[1,2,3,4,5,6,7,8,9,10].map(n => `<option value="${n}">${n}</option>`).join('')}</select></div>`
+        : '';
+      const renderHistoryRow = entry => {
+        const valueText = exercise.measurementType === 'duration' || exercise.measurementType === 'mobility'
+          ? `${entry.sets} × ${entry.durationSeconds ?? '—'} s`
+          : `${entry.sets} × ${entry.reps ?? '—'}${entry.weight != null ? ` @ ${entry.weight} kg` : ''}`;
+        return `<div class="history-row">
+          <span>${escapeHtml(entry.date)} — ${escapeHtml(valueText)}${entry.rpe ? `, RPE ${entry.rpe}` : ''}</span>
+          <span class="training-history-actions">
+            <button type="button" class="mini-btn edit-log" data-date="${escapeAttr(entry.date)}" aria-label="Edytuj wpis: ${escapeAttr(exercise.name)}, ${escapeAttr(entry.date)}">Edytuj</button>
+            <button type="button" class="mini-btn del-log" data-date="${escapeAttr(entry.date)}" aria-label="Usuń wpis: ${escapeAttr(exercise.name)}, ${escapeAttr(entry.date)}">Usuń</button>
+          </span>
+        </div>`;
+      };
+      const recentHistoryRows = history.slice(0, TRAINING_HISTORY_VISIBLE_LIMIT).map(renderHistoryRow).join('');
+      const olderHistory = history.slice(TRAINING_HISTORY_VISIBLE_LIMIT);
+      const olderHistoryDisclosure = olderHistory.length ? `
+        <details class="training-history-more">
+          <summary>Starsze wpisy (${olderHistory.length})</summary>
+          <div class="training-history-more-body">${olderHistory.map(renderHistoryRow).join('')}</div>
+        </details>` : '';
+
+      return `
+        <details class="exercise-card" data-ex="${escapeAttr(exercise.id)}">
+          <summary class="training-exercise-summary">
+            <span>
+              <span class="ex-name">${escapeHtml(exercise.name)}</span>
+              <span class="training-exercise-prescription">${escapeHtml(trainingExercisePrescription(exercise))}</span>
+            </span>
+            <span class="badge">${escapeHtml(measurementLabel)}</span>
+          </summary>
+          <div class="training-exercise-body">
+            <div class="training-instruction-grid">
+              <div class="ex-detail"><b>Cel</b>${escapeHtml(exercise.goal)}</div>
+              <div class="ex-detail"><b>Rozgrzewka</b>${escapeHtml(exercise.warmup)}</div>
+              <div class="ex-detail training-instruction-wide"><b>Technika</b>${escapeHtml(exercise.technique)}</div>
+              <div class="ex-detail"><b>Tempo i przerwa</b>${escapeHtml(exercise.tempo)} · odpoczynek ${exercise.restSeconds} s</div>
+              <div class="ex-detail"><b>Progresja</b>${escapeHtml(exercise.progression)}</div>
+              <div class="ex-detail training-instruction-wide"><b>Najczęstsze błędy</b>${escapeHtml(exercise.commonMistakes.join(' · '))}</div>
+              <div class="ex-detail"><b>Schłodzenie</b>${escapeHtml(exercise.cooldown)}</div>
+              <div class="ex-detail"><b>Rozciąganie</b>${escapeHtml(exercise.stretching.join(' · ') || 'Nie jest wymagane')}</div>
+              ${prText ? `<div class="ex-detail"><b>Twój rekord</b>${escapeHtml(prText)}</div>` : ''}
+            </div>
+            <div class="training-material">
+              <span><strong>Materiał do techniki</strong><small>${escapeHtml(exercise.material.source)} · sprawdzono ${escapeHtml(exercise.material.verifiedAt)}</small></span>
+              <a class="ghost-link" href="${escapeAttr(exercise.material.url)}" target="_blank" rel="noopener noreferrer">Otwórz: ${escapeHtml(exercise.material.title)}</a>
+            </div>
+            <form class="log-form" data-target-date="${escapeAttr(today)}" aria-label="Dziennik ćwiczenia ${escapeAttr(exercise.name)}">
+              <p class="log-editing-label" id="${prefix}-date">Wpis na dziś: ${escapeHtml(today)}</p>
+              <div class="training-log-grid">
+                <div class="training-form-field"><label for="${prefix}-sets">Liczba serii</label><input type="number" min="1" max="20" id="${prefix}-sets" class="lf-sets" aria-describedby="${errorId}"></div>
+                ${repetitionField}
+                ${weightField}
+                ${rpeField}
+              </div>
+              <div class="training-form-actions">
+                <button type="submit" class="primary log-save">Zapisz wpis</button>
+                <button type="button" class="ghost log-cancel" hidden>Anuluj edycję</button>
+              </div>
+            </form>
+            <div class="log-errors" id="${errorId}" role="alert" aria-live="polite" hidden></div>
+            <details class="training-history">
+              <summary>Historia ćwiczenia (${history.length})</summary>
+              <div class="training-history-body">
+                ${recentHistoryRows || '<p class="training-empty">Nie ma jeszcze zapisanych wyników.</p>'}
+                ${olderHistoryDisclosure}
+              </div>
+            </details>
           </div>
-        ` : `
-          <div class="banner-ok">✓ Plan wygenerowany z profilu (${plan.days.length} dni/tydzień).</div>
-          ${plan.needsManualReview ? `<div class="banner-warn">⚠ Ten plan wymaga ręcznej weryfikacji ze względu na zgłoszone ograniczenie zdrowotne. To nie jest porada medyczna.</div>` : ''}
-          ${plan.notes.length ? `<div class="pillar-tag" style="margin-bottom:10px;">Zmiany wynikające z profilu:</div><div class="log" style="margin-bottom:14px;">${plan.notes.map(n => `<div>${n}</div>`).join('')}</div>` : ''}
-        `}
-        <div class="tabs" id="training-tabs"></div>
-        <div id="training-day-content"></div>
-      </div>
-    `;
-
-    const tabsEl = container.querySelector('#training-tabs');
-    tabsEl.innerHTML = plan.days.map(d => `<button class="ghost train-tab" data-day="${d.id}">${d.name}${scheduledToday && scheduledToday.id === d.id ? ' · dziś' : ''}</button>`).join('')
-      + `<button class="ghost train-tab" data-day="profile">👤 Profil</button>`;
-
-    const gotoProfileBtn = container.querySelector('#goto-profile');
-    if (gotoProfileBtn) gotoProfileBtn.addEventListener('click', () => selectTab('profile'));
-
-    const renderProfileTab = () => {
-      const contentEl = container.querySelector('#training-day-content');
-      const p = this.getProfile() || DEFAULT_PROFILE_FIELDS;
-      contentEl.innerHTML = `
-        <div class="profile-form">
-          <div class="field-row"><label>Sprzęt (po przecinku)</label><input type="text" id="pf-equipment" value="${escapeAttr((p.equipment||[]).join(', '))}" placeholder="hantle, mata, drążek"></div>
-          <div class="field-row"><label>Miejsce</label><input type="text" id="pf-location" value="${escapeAttr(p.location||'')}" placeholder="dom / siłownia"></div>
-          <div class="field-row"><label>Poziom</label>
-            <select id="pf-level">
-              <option value="">wybierz</option>
-              <option value="beginner" ${p.experienceLevel==='beginner'?'selected':''}>początkujący</option>
-              <option value="intermediate" ${p.experienceLevel==='intermediate'?'selected':''}>średnio zaawansowany</option>
-              <option value="advanced" ${p.experienceLevel==='advanced'?'selected':''}>zaawansowany</option>
-            </select>
-          </div>
-          <div class="field-row"><label>Dostępne dni (numery 0-6, po przecinku, 1=pon)</label><input type="text" id="pf-days" value="${escapeAttr((p.availableDays||[]).join(', '))}" placeholder="1, 2, 3, 5"></div>
-          <div class="field-row"><label>Czas/sesję (min)</label><input type="number" id="pf-minutes" value="${escapeAttr(p.availableMinutesPerSession||'')}"></div>
-          <div class="field-row"><label>Główny cel</label><input type="text" id="pf-goal" value="${escapeAttr(p.mainGoal||'')}" placeholder="sylwetka / siła / zdrowie"></div>
-          <div class="field-row"><label>Ograniczenia</label><input type="text" id="pf-limits" value="${escapeAttr(p.limitations||'')}" placeholder="np. ból kolana — opcjonalne"></div>
-          <div class="pillar-tag" style="margin-top:10px;">Wyniki startowe (opcjonalnie)</div>
-          <div class="field-row"><label>Przysiady (powt.)</label><input type="number" id="pf-squat" value="${escapeAttr(p.baselineResults?.squatReps ?? '')}"></div>
-          <div class="field-row"><label>Pompki (powt.)</label><input type="number" id="pf-pushup" value="${escapeAttr(p.baselineResults?.pushupReps ?? '')}"></div>
-          <div class="field-row"><label>Plank (s)</label><input type="number" id="pf-plank" value="${escapeAttr(p.baselineResults?.plankSeconds ?? '')}"></div>
-          <button class="primary" id="pf-save" style="margin-top:12px;">Zapisz profil</button>
-          <div class="log-errors" id="pf-errors" style="display:none;color:#f87171;font-size:12px;margin-top:8px;"></div>
-        </div>
-      `;
-      contentEl.querySelector('#pf-save').addEventListener('click', () => {
-        const newProfile = {
-          equipment: contentEl.querySelector('#pf-equipment').value.split(',').map(s => s.trim()).filter(Boolean),
-          location: contentEl.querySelector('#pf-location').value.trim(),
-          experienceLevel: contentEl.querySelector('#pf-level').value,
-          availableDays: contentEl.querySelector('#pf-days').value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)),
-          availableMinutesPerSession: parseInt(contentEl.querySelector('#pf-minutes').value) || null,
-          mainGoal: contentEl.querySelector('#pf-goal').value.trim(),
-          limitations: contentEl.querySelector('#pf-limits').value.trim(),
-          baselineResults: {
-            squatReps: parseInt(contentEl.querySelector('#pf-squat').value) || null,
-            pushupReps: parseInt(contentEl.querySelector('#pf-pushup').value) || null,
-            plankSeconds: parseInt(contentEl.querySelector('#pf-plank').value) || null
-          }
-        };
-        const result = this.saveProfile(newProfile);
-        if (!result.ok) {
-          const errEl = contentEl.querySelector('#pf-errors');
-          errEl.style.display = 'block';
-          errEl.textContent = result.errors.join(' · ');
-          return; // NIE re-renderujemy — profil się nie zapisał, błędy widoczne
-        }
-        this.render(container);
-      });
+        </details>`;
     };
 
-    const renderDay = (dayId) => {
-      const day = plan.days.find(d => d.id === dayId);
-      const contentEl = container.querySelector('#training-day-content');
-      const today = localDateKey();
-      const taskId = `${day.id}:${today}`;
-      const sessions = Store.get('training:sessions', {});
-      const session = sessions[taskId] || { status: 'planned' };
-      const isToday = scheduledToday && scheduledToday.id === day.id;
-      const loggedCount = this._countLoggedExercisesForDate(day, today);
-
-      const STATUS_LABELS = {
-        planned: 'Zaplanowane', in_progress: 'W trakcie', completed: '✓ Ukończone',
-        partial: '◐ Częściowo wykonane — dokończ', skipped: 'Pominięte'
-      };
-      const STATUS_CLASS = {
-        planned: '', in_progress: 'warn', completed: 'ok', partial: 'warn', skipped: ''
-      };
-
-      contentEl.innerHTML = `
-        ${isToday ? `
-          <div class="field-row" style="margin:14px 0;flex-wrap:wrap;">
-            <span class="badge ${STATUS_CLASS[session.status] || ''}">${STATUS_LABELS[session.status] || session.status}</span>
-            <span class="pillar-tag">zalogowano ${loggedCount}/${day.exercises.length} ćwiczeń dziś</span>
-            ${session.status === 'planned' || session.status === 'in_progress' || session.status === 'partial' ? `
-              <button class="ghost" id="finish-day">${session.status === 'partial' ? 'dokończ i zamknij' : 'zakończ trening'}</button>
-              <button class="ghost" id="skip-day">pomiń dzień</button>
-            ` : `<button class="ghost" id="undo-day">cofnij</button>`}
+    const renderDay = day => {
+      const isToday = scheduledToday?.id === day.id;
+      return `
+        <details class="training-day-panel" data-training-day="${escapeAttr(day.id)}">
+          <summary class="training-day-summary">
+            <span>
+              <strong>${escapeHtml(day.name)}</strong>
+              <small>${escapeHtml(trainingWeekdaysLabel(day.weekdays))}</small>
+            </span>
+            <span class="training-day-meta">${day.estimatedMinutes} min · ${day.exercises.length} ${day.exercises.length === 1 ? 'ćwiczenie' : 'ćwiczenia'}${isToday ? ' · dzisiaj' : ''}</span>
+          </summary>
+          <div class="training-day-body">
+            ${day.exercises.length
+              ? day.exercises.map(renderExercise).join('')
+              : '<div class="banner-warn">W tej sesji nie ma ćwiczeń po zastosowaniu ograniczeń profilu. Sprawdź profil i skonsultuj bezpieczny plan przed treningiem.</div>'}
           </div>
-        ` : ''}
-        <div id="exercise-list"></div>
-      `;
+        </details>`;
+    };
 
-      const exListEl = contentEl.querySelector('#exercise-list');
-      exListEl.innerHTML = day.exercises.map(ex => {
-        const pr = this.getExercisePR(ex.id);
-        const history = this.getExerciseHistory(ex.id);
-        const prText = pr ? (pr.type === 'weight' ? `${pr.value} kg` : pr.type === 'reps' ? `${pr.value} powt.` : `${pr.value}s`) : null;
+    const p = profile || DEFAULT_PROFILE_FIELDS;
+    const weekdayChoices = TRAINING_WEEKDAY_ORDER.map(weekday => `
+      <label class="training-day-choice" for="pf-day-${weekday}">
+        <input type="checkbox" id="pf-day-${weekday}" name="pf-available-day" value="${weekday}" ${(p.availableDays || []).includes(weekday) ? 'checked' : ''}>
+        <span>${TRAINING_WEEKDAY_LABELS[weekday]}</span>
+      </label>`).join('');
+    const currentStatus = currentSession ? (statusLabels[currentSession.status] || 'Status wymaga sprawdzenia') : null;
+    const currentStatusClass = currentSession ? (statusClasses[currentSession.status] || '') : '';
 
-        const formFields = ex.measurementType === 'weight_reps'
-          ? `<input type="number" placeholder="serie" class="lf-sets" style="width:60px;">
-             <input type="number" placeholder="powt." class="lf-reps" style="width:60px;">
-             <input type="number" placeholder="ciężar (kg)" class="lf-weight" style="width:100px;">`
-          : ex.measurementType === 'bodyweight_reps'
-          ? `<input type="number" placeholder="serie" class="lf-sets" style="width:60px;">
-             <input type="number" placeholder="powt." class="lf-reps" style="width:60px;">`
-          : `<input type="number" placeholder="serie" class="lf-sets" style="width:60px;">
-             <input type="number" placeholder="czas (s)" class="lf-duration" style="width:90px;">`;
-        const rpeField = ex.measurementType !== 'mobility'
-          ? `<select class="lf-rpe"><option value="">RPE</option>${[1,2,3,4,5,6,7,8,9,10].map(n=>`<option value="${n}">${n}</option>`).join('')}</select>`
-          : '';
+    container.innerHTML = `
+      <div class="training-product-layout">
+        <section class="training-alerts" aria-label="Ważne informacje o planie">
+          ${!complete ? `
+            <div class="banner-warn" role="status">
+              <strong>Plan roboczy</strong>
+              Ćwiczenia są ogólnym punktem startu dla początkującego bez przeciwwskazań, ale nie są jeszcze dopasowane do Ciebie.
+              <button type="button" class="link-btn" id="goto-profile">Uzupełnij profil treningowy</button>.
+            </div>` : ''}
+          ${plan.needsManualReview ? `
+            <div class="banner-warn" role="alert">
+              <strong>Najpierw sprawdź bezpieczeństwo planu</strong>
+              Zgłoszone ograniczenie zdrowotne wymaga ręcznej weryfikacji. Ten plan nie jest poradą medyczną — skonsultuj go z fizjoterapeutą przed startem.
+            </div>` : ''}
+        </section>
 
-        return `
-        <div class="exercise-card" data-ex="${ex.id}">
-          <div class="ex-head">
-            <span class="ex-name">${ex.name}</span>
-            <span class="badge">${ex.measurementType.replace('_',' ')}</span>
-          </div>
-          <div class="ex-detail"><b>Cel</b>${ex.goal}</div>
-          <div class="ex-detail"><b>Rozgrzewka</b>${ex.warmup}</div>
-          <div class="ex-detail"><b>Technika</b>${ex.technique}</div>
-          <div class="ex-detail"><b>Materiał</b><a href="${ex.material.url}" target="_blank" rel="noopener">${ex.material.title}</a> <span class="pillar-tag">(${ex.material.source}, zweryfikowano ${ex.material.verifiedAt})</span></div>
-          <div class="ex-detail"><b>Tempo / przerwa</b>${ex.tempo} · odpoczynek ${ex.restSeconds}s</div>
-          <div class="ex-detail"><b>Progresja</b>${ex.progression}</div>
-          <div class="ex-detail"><b>Najczęstsze błędy</b>${ex.commonMistakes.join(' · ')}</div>
-          <div class="ex-detail"><b>Schłodzenie</b>${ex.cooldown}</div>
-          <div class="ex-detail"><b>Rozciąganie</b>${ex.stretching.join(' · ') || '—'}</div>
-          ${prText ? `<div class="ex-detail"><b>Rekord</b>${prText}</div>` : ''}
-
-          <div class="log-form" data-target-date="${today}">
-            <span class="log-editing-label pillar-tag">wpis na: ${today}</span>
-            ${formFields}
-            ${rpeField}
-            <button class="ghost log-save">zapisz</button>
-            <button class="ghost log-cancel" style="display:none;">anuluj edycję</button>
-          </div>
-          <div class="log-errors" style="display:none;color:#f87171;font-size:11px;margin-top:4px;"></div>
-
-          ${history.length ? `
-            <div class="ex-history">
-              <div class="pillar-tag" style="margin:8px 0 4px;">Historia (${history.length})</div>
-              ${history.slice(0, 8).map(h => {
-                const valueText = ex.measurementType === 'duration' || ex.measurementType === 'mobility'
-                  ? `${h.sets}× ${h.durationSeconds ?? '—'}s`
-                  : `${h.sets}×${h.reps ?? '—'}${h.weight != null ? ' @ ' + h.weight + 'kg' : ''}`;
-                return `<div class="history-row">
-                  <span>${h.date} — ${valueText}${h.rpe ? ', RPE ' + h.rpe : ''}</span>
-                  <button class="mini-btn edit-log" data-date="${h.date}">edytuj</button>
-                  <button class="mini-btn del-log" data-date="${h.date}">usuń</button>
-                </div>`;
-              }).join('')}
+        <section class="card training-current-session" aria-labelledby="training-current-title">
+          <div class="training-section-heading">
+            <div>
+              <p class="training-eyebrow">${scheduledToday ? 'Bieżąca sesja' : 'Dzisiaj'}</p>
+              <h2 id="training-current-title" tabindex="-1">${scheduledToday ? escapeHtml(scheduledToday.name) : 'Dzień bez zaplanowanej sesji'}</h2>
             </div>
-          ` : ''}
-        </div>
-      `;
-      }).join('');
+            ${currentStatus ? `<span class="badge ${currentStatusClass}">${escapeHtml(currentStatus)}</span>` : ''}
+          </div>
+          ${scheduledToday ? `
+            <p class="training-current-meta">${scheduledToday.estimatedMinutes} min · ${scheduledToday.exercises.length} ${scheduledToday.exercises.length === 1 ? 'ćwiczenie' : 'ćwiczenia'} · zapisano ${loggedToday}/${scheduledToday.exercises.length}</p>
+            <p>${currentSession.status === 'completed'
+              ? 'Sesja jest ukończona. Możesz przejrzeć instrukcje, materiał i zapisane wyniki.'
+              : currentSession.status === 'skipped'
+              ? 'Sesja została pominięta. Możesz ją przywrócić albo przejrzeć plan.'
+              : 'Otwórz listę ćwiczeń, wykonuj je po kolei i zapisuj wyniki bezpośrednio przy każdym ruchu.'}</p>
+          ` : `
+            <p>Regeneracja jest częścią planu. Najbliższa sesja to ${nextDay ? `<strong>${escapeHtml(nextDay.name)}</strong> (${escapeHtml(trainingWeekdaysLabel(nextDay.weekdays))})` : 'brak sesji w aktywnym planie'}.</p>
+          `}
+          <div class="training-primary-actions">
+            ${mainActionDay ? `<button type="button" class="primary" id="training-main-action" data-day="${escapeAttr(mainActionDay.id)}">${escapeHtml(mainActionLabel)}</button>` : ''}
+            ${scheduledToday && ['planned', 'in_progress', 'partial'].includes(currentSession.status) ? `
+              <button type="button" class="ghost" id="finish-day">${currentSession.status === 'partial' ? 'Zamknij częściową sesję' : 'Zakończ trening'}</button>
+              <button type="button" class="ghost" id="skip-day">Pomiń dzisiejszą sesję</button>
+            ` : scheduledToday ? '<button type="button" class="ghost" id="undo-day">Cofnij status sesji</button>' : ''}
+          </div>
+        </section>
 
-      exListEl.querySelectorAll('.exercise-card').forEach(card => {
-        const exId = card.dataset.ex;
-        const errBox = card.querySelector('.log-errors');
-        const logForm = card.querySelector('.log-form');
+        ${complete && plan.notes.length ? `
+          <details class="card training-plan-notes">
+            <summary>Jak plan został dopasowany</summary>
+            <div class="training-plan-notes-body">${plan.notes.map(note => `<p>${escapeHtml(note)}</p>`).join('')}</div>
+          </details>` : ''}
 
-        function readForm() {
-          return {
-            sets: card.querySelector('.lf-sets')?.value,
-            reps: card.querySelector('.lf-reps')?.value,
-            durationSeconds: card.querySelector('.lf-duration')?.value,
-            weight: card.querySelector('.lf-weight')?.value,
-            rpe: card.querySelector('.lf-rpe')?.value
-          };
-        }
+        <section class="card training-plan-card" aria-labelledby="training-plan-title">
+          <div class="training-section-heading">
+            <div>
+              <p class="training-eyebrow">Plan tygodnia</p>
+              <h2 id="training-plan-title">Sesje i ćwiczenia</h2>
+            </div>
+            <span class="training-plan-count">${plan.days.length} ${plan.days.length === 1 ? 'dzień' : 'dni'} w planie</span>
+          </div>
+          <p>Rozwiń dzień, a potem wybrane ćwiczenie. W środku znajdziesz technikę, materiał, sposób progresji, dziennik i historię.</p>
+          <div class="training-day-list">${plan.days.map(day => renderDay(day)).join('')}</div>
+        </section>
 
-        card.querySelector('.log-save').addEventListener('click', () => {
-          const targetDate = logForm.dataset.targetDate;
-          const raw = readForm();
-          const result = this.upsertExerciseLog(exId, targetDate, raw);
-          if (!result.ok) {
-            errBox.style.display = 'block';
-            errBox.textContent = result.errors.join(' · ');
-            return;
+        <details class="card training-profile-details" id="training-profile-panel">
+          <summary>
+            <span><strong>Profil i dopasowanie planu</strong><small>${complete ? 'Profil uzupełniony' : 'Wymaga uzupełnienia'}</small></span>
+          </summary>
+          <form class="profile-form training-profile-form" id="training-profile-form" aria-describedby="pf-errors">
+            <div class="training-form-field training-form-wide"><label for="pf-equipment">Dostępny sprzęt (oddziel przecinkami)</label><input type="text" id="pf-equipment" value="${escapeAttr((p.equipment || []).join(', '))}" placeholder="np. hantle, mata, drążek"></div>
+            <div class="training-form-field"><label for="pf-location">Miejsce treningu</label><input type="text" id="pf-location" value="${escapeAttr(p.location || '')}" placeholder="np. dom lub siłownia"></div>
+            <div class="training-form-field"><label for="pf-level">Poziom doświadczenia</label>
+              <select id="pf-level">
+                <option value="">Wybierz poziom</option>
+                <option value="beginner" ${p.experienceLevel === 'beginner' ? 'selected' : ''}>Początkujący</option>
+                <option value="intermediate" ${p.experienceLevel === 'intermediate' ? 'selected' : ''}>Średnio zaawansowany</option>
+                <option value="advanced" ${p.experienceLevel === 'advanced' ? 'selected' : ''}>Zaawansowany</option>
+              </select>
+            </div>
+            <fieldset class="training-days-fieldset training-form-wide">
+              <legend>Dni dostępne na trening</legend>
+              <div class="training-day-choices">${weekdayChoices}</div>
+            </fieldset>
+            <div class="training-form-field"><label for="pf-minutes">Maksymalny czas jednej sesji w minutach</label><input type="number" min="10" max="240" id="pf-minutes" value="${escapeAttr(p.availableMinutesPerSession || '')}"></div>
+            <div class="training-form-field"><label for="pf-goal">Główny cel treningowy</label><input type="text" id="pf-goal" value="${escapeAttr(p.mainGoal || '')}" placeholder="np. siła, zdrowie, sylwetka"></div>
+            <div class="training-form-field training-form-wide"><label for="pf-limits">Ograniczenia i informacje ważne dla bezpieczeństwa</label><textarea id="pf-limits" rows="3" placeholder="np. ból kolana; zostaw puste, jeśli brak">${escapeHtml(p.limitations || '')}</textarea></div>
+            <fieldset class="training-baseline-fieldset training-form-wide">
+              <legend>Wyniki startowe (opcjonalnie)</legend>
+              <div class="training-profile-grid">
+                <div class="training-form-field"><label for="pf-squat">Przysiady bez przerwy — liczba powtórzeń</label><input type="number" min="0" id="pf-squat" value="${escapeAttr(p.baselineResults?.squatReps ?? '')}"></div>
+                <div class="training-form-field"><label for="pf-pushup">Pompki bez przerwy — liczba powtórzeń</label><input type="number" min="0" id="pf-pushup" value="${escapeAttr(p.baselineResults?.pushupReps ?? '')}"></div>
+                <div class="training-form-field"><label for="pf-plank">Plank — czas w sekundach</label><input type="number" min="0" id="pf-plank" value="${escapeAttr(p.baselineResults?.plankSeconds ?? '')}"></div>
+              </div>
+            </fieldset>
+            <div class="training-form-actions training-form-wide"><button type="submit" class="primary" id="pf-save">Zapisz profil i przelicz plan</button></div>
+            <div class="log-errors training-form-wide" id="pf-errors" role="alert" aria-live="polite" hidden></div>
+          </form>
+        </details>
+      </div>`;
+
+    const findDayPanel = dayId => [...container.querySelectorAll('.training-day-panel')]
+      .find(panel => panel.dataset.trainingDay === dayId);
+    const revealDay = (dayId, exerciseId, options = {}) => {
+      const dayPanel = findDayPanel(dayId);
+      if (!dayPanel) return;
+      dayPanel.open = true;
+      let focusTarget = dayPanel.querySelector(':scope > summary');
+      if (exerciseId) {
+        const exercisePanel = [...dayPanel.querySelectorAll('.exercise-card')]
+          .find(panel => panel.dataset.ex === exerciseId);
+        if (exercisePanel) {
+          exercisePanel.open = true;
+          focusTarget = exercisePanel.querySelector(':scope > summary');
+          const historyPanel = exercisePanel.querySelector('.training-history');
+          if (options.openHistory && historyPanel) {
+            historyPanel.open = true;
+            focusTarget = historyPanel.querySelector(':scope > summary');
+            const olderHistoryPanel = historyPanel.querySelector('.training-history-more');
+            if (options.openOlderHistory && olderHistoryPanel) {
+              olderHistoryPanel.open = true;
+              focusTarget = olderHistoryPanel.querySelector(':scope > summary');
+            }
           }
-          errBox.style.display = 'none';
-          renderDay(dayId);
+          if (options.focus === 'log') focusTarget = exercisePanel.querySelector('.lf-sets') || focusTarget;
+        }
+      }
+      (focusTarget || container.querySelector('#training-current-title'))?.focus();
+    };
+    const rerenderAtExercise = (dayId, exerciseId, options = {}) => {
+      this.render(container);
+      revealDay(dayId, exerciseId, options);
+    };
+    const rerenderAndFocusCurrentSession = selectors => {
+      this.render(container);
+      const focusTarget = selectors.map(selector => container.querySelector(selector)).find(Boolean)
+        || container.querySelector('#training-current-title');
+      focusTarget?.focus();
+    };
+
+    container.querySelector('#training-main-action')?.addEventListener('click', event => {
+      revealDay(event.currentTarget.dataset.day);
+    });
+
+    const profilePanel = container.querySelector('#training-profile-panel');
+    container.querySelector('#goto-profile')?.addEventListener('click', () => {
+      profilePanel.open = true;
+      profilePanel.querySelector(':scope > summary')?.focus();
+    });
+
+    const profileForm = container.querySelector('#training-profile-form');
+    profileForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const newProfile = {
+        equipment: profileForm.querySelector('#pf-equipment').value.split(',').map(s => s.trim()).filter(Boolean),
+        location: profileForm.querySelector('#pf-location').value.trim(),
+        experienceLevel: profileForm.querySelector('#pf-level').value,
+        availableDays: [...profileForm.querySelectorAll('[name="pf-available-day"]:checked')].map(input => Number(input.value)),
+        availableMinutesPerSession: parseInt(profileForm.querySelector('#pf-minutes').value) || null,
+        mainGoal: profileForm.querySelector('#pf-goal').value.trim(),
+        limitations: profileForm.querySelector('#pf-limits').value.trim(),
+        baselineResults: {
+          squatReps: parseInt(profileForm.querySelector('#pf-squat').value) || null,
+          pushupReps: parseInt(profileForm.querySelector('#pf-pushup').value) || null,
+          plankSeconds: parseInt(profileForm.querySelector('#pf-plank').value) || null
+        }
+      };
+      const result = this.saveProfile(newProfile);
+      if (!result.ok) {
+        const errorElement = profileForm.querySelector('#pf-errors');
+        errorElement.hidden = false;
+        errorElement.textContent = result.errors.join(' · ');
+        return;
+      }
+      this.render(container);
+      const nextProfilePanel = container.querySelector('#training-profile-panel');
+      nextProfilePanel.open = true;
+      (nextProfilePanel.querySelector(':scope > summary') || container.querySelector('#training-current-title'))?.focus();
+    });
+
+    container.querySelectorAll('.training-day-panel').forEach(dayPanel => {
+      const dayId = dayPanel.dataset.trainingDay;
+      dayPanel.querySelectorAll('.exercise-card').forEach(card => {
+        const exerciseId = card.dataset.ex;
+        const errorBox = card.querySelector('.log-errors');
+        const logForm = card.querySelector('.log-form');
+        const readForm = () => ({
+          sets: card.querySelector('.lf-sets')?.value,
+          reps: card.querySelector('.lf-reps')?.value,
+          durationSeconds: card.querySelector('.lf-duration')?.value,
+          weight: card.querySelector('.lf-weight')?.value,
+          rpe: card.querySelector('.lf-rpe')?.value
         });
 
-        card.querySelectorAll('.edit-log').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const date = btn.dataset.date;
-            const history = this.getExerciseHistory(exId);
-            const entry = history.find(h => h.date === date);
+        logForm.addEventListener('submit', event => {
+          event.preventDefault();
+          const result = this.upsertExerciseLog(exerciseId, logForm.dataset.targetDate, readForm());
+          if (!result.ok) {
+            errorBox.hidden = false;
+            errorBox.textContent = result.errors.join(' · ');
+            return;
+          }
+          rerenderAtExercise(dayId, exerciseId, { openHistory: true });
+        });
+
+        card.querySelectorAll('.edit-log').forEach(button => {
+          button.addEventListener('click', () => {
+            const entry = this.getExerciseHistory(exerciseId).find(item => item.date === button.dataset.date);
             if (!entry) return;
-            logForm.dataset.targetDate = date;
-            logForm.querySelector('.log-editing-label').textContent = 'wpis na: ' + date + ' (edycja)';
+            logForm.dataset.targetDate = entry.date;
+            logForm.querySelector('.log-editing-label').textContent = `Edytujesz wpis z dnia ${entry.date}`;
             if (card.querySelector('.lf-sets')) card.querySelector('.lf-sets').value = entry.sets ?? '';
             if (card.querySelector('.lf-reps')) card.querySelector('.lf-reps').value = entry.reps ?? '';
             if (card.querySelector('.lf-duration')) card.querySelector('.lf-duration').value = entry.durationSeconds ?? '';
             if (card.querySelector('.lf-weight')) card.querySelector('.lf-weight').value = entry.weight ?? '';
             if (card.querySelector('.lf-rpe')) card.querySelector('.lf-rpe').value = entry.rpe ?? '';
-            logForm.querySelector('.log-cancel').style.display = 'inline-block';
+            logForm.querySelector('.log-cancel').hidden = false;
+            logForm.querySelector('.lf-sets')?.focus();
           });
         });
 
-        const cancelBtn = logForm.querySelector('.log-cancel');
-        if (cancelBtn) cancelBtn.addEventListener('click', () => renderDay(dayId));
-
-        card.querySelectorAll('.del-log').forEach(btn => {
-          btn.addEventListener('click', () => {
+        logForm.querySelector('.log-cancel').addEventListener('click', () => rerenderAtExercise(dayId, exerciseId, { focus: 'log' }));
+        card.querySelectorAll('.del-log').forEach(button => {
+          button.addEventListener('click', () => {
             if (!confirm('Usunąć ten wpis z historii?')) return;
-            this.deleteExerciseLog(exId, btn.dataset.date);
-            renderDay(dayId);
+            const openOlderHistory = !!button.closest('.training-history-more');
+            this.deleteExerciseLog(exerciseId, button.dataset.date);
+            rerenderAtExercise(dayId, exerciseId, { openHistory: true, openOlderHistory });
           });
         });
       });
-
-      if (isToday) {
-        const finishBtn = contentEl.querySelector('#finish-day');
-        if (finishBtn) finishBtn.addEventListener('click', () => {
-          finishSession(day.id, today);
-          renderDay(dayId);
-        });
-        const skipBtn = contentEl.querySelector('#skip-day');
-        if (skipBtn) skipBtn.addEventListener('click', () => {
-          skipSession(day.id, today);
-          renderDay(dayId);
-        });
-        const undoBtn = contentEl.querySelector('#undo-day');
-        if (undoBtn) undoBtn.addEventListener('click', () => {
-          undoSession(day.id, today);
-          renderDay(dayId);
-        });
-      }
-    };
-
-    function selectTab(dayId) {
-      tabsEl.querySelectorAll('.train-tab').forEach(b => b.classList.remove('active'));
-      tabsEl.querySelector(`[data-day="${dayId}"]`)?.classList.add('active');
-      if (dayId === 'profile') renderProfileTab(); else renderDay(dayId);
-    }
-
-    tabsEl.querySelectorAll('.train-tab').forEach(btn => {
-      btn.addEventListener('click', () => selectTab(btn.dataset.day));
     });
 
-    const initialDay = scheduledToday ? scheduledToday.id : plan.days[0].id;
-    selectTab(initialDay);
+    if (scheduledToday) {
+      container.querySelector('#finish-day')?.addEventListener('click', () => {
+        finishSession(scheduledToday.id, today);
+        rerenderAndFocusCurrentSession(['#undo-day', '#finish-day', '#training-main-action']);
+      });
+      container.querySelector('#skip-day')?.addEventListener('click', () => {
+        skipSession(scheduledToday.id, today);
+        rerenderAndFocusCurrentSession(['#undo-day', '#training-main-action']);
+      });
+      container.querySelector('#undo-day')?.addEventListener('click', () => {
+        undoSession(scheduledToday.id, today);
+        rerenderAndFocusCurrentSession(['#training-main-action', '#undo-day']);
+      });
+    }
   }
 };
 ModuleRegistry.register(TrainingModule);

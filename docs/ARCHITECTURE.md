@@ -8,9 +8,9 @@ Personal OS v2 is a single-page static browser application split across twelve p
 - `src/styles.css` contains the extracted application stylesheet;
 - `src/core.js` contains the mechanically extracted Core foundation: local and civil date handling, the pure Task v2 validator, EventBus, Store, MemoryStore, data migrations, ModuleRegistry, and Router;
 - `src/today.js` contains the Today layer: DayEngine, HabitEngine, the Product UI v1 Today renderer, time budgets, PriorityEngine, and DecisionEngine;
-- `src/training.js` contains the mechanically extracted Training domain: exercise data, validation, TrainingPlanEngine, session and log rules, TrainingModule, and its view;
+- `src/training.js` contains the Training domain: exercise data, validation, TrainingPlanEngine, session and log rules, TrainingModule, and the Product UI v1 current-session, plan, exercise-detail, logging, history, and profile view;
 - `src/learning.js` contains the mechanically extracted Learning domain: Roadmap, LessonGuide, validation, escaped rendering, reconciliation, and LearningModule registration;
-- `src/school.js` contains the mechanically extracted School domain: school item and lesson data rules, validation, priority and load calculations, SchoolModule, and its view;
+- `src/school.js` contains the School domain: school item and lesson data rules, validation, priority and load calculations, SchoolModule, and the Product UI v1 overview, urgent-work, deadline, schedule, vacation-mode, and labelled-form view;
 - `src/availability.js` contains AvailabilityEngine v1, its strict weekly/free-time and date-exception model, pure validators and normalizers, and the Availability settings card;
 - `src/english.js` contains EnglishModule MVP: strict profile and activity contracts, the manual queue and state machine, Task integration, and its escaped view;
 - `src/plan-day.js` contains the pure deterministic PlanDayEngine: safe Task projection, source isolation, energy and budget policy, Availability windows, atomic best-fit allocation, domain rotation, and closed result reasons;
@@ -98,11 +98,11 @@ Engines communicate with modules through stable contracts and shared task record
 
 The Today declarations in `src/today.js` depend on Core declarations and share the same global lexical environment with the later `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js`. Their legacy habit-rendering references to `escapeHtml` and `escapeAttr` are deferred until `src/learning.js` has loaded, while the plan renderer's `PlanDayEngine` reference is deferred until `src/plan-day.js` has loaded. Conversely, later application code depends on `DayEngine`, `DEFAULT_HABITS`, `renderDzis`, `renderTodayTasks`, and the Today lifecycle controller.
 
-The Training declarations in `src/training.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, the civil weekday helper, and `ModuleRegistry`, and on Today's `DayEngine`. Their reference to `escapeAttr` is deferred until rendering after `src/learning.js` has loaded. Later School, Backup, and initialization code depends on the already registered `TrainingModule`, while backup validation in `src/backup.js` uses Training declarations such as `validateProfile`. Training refreshes only its own view after UI actions; shared task events trigger the single Today refresh.
+The Training declarations in `src/training.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, the civil weekday helper, and `ModuleRegistry`, and on Today's `DayEngine`. Their references to `escapeHtml` and `escapeAttr` are deferred until rendering after `src/learning.js` has loaded. Later School, Backup, and initialization code depends on the already registered `TrainingModule`, while backup validation in `src/backup.js` uses Training declarations such as `validateProfile`. Training refreshes only its own view after UI actions; shared task events trigger the single Today refresh. Its product renderer reads the existing active plan and session state, places the current session and its primary action first, presents weekdays and measurement types as Polish user-facing labels, and uses nested native disclosures for plan days, exercise instructions, materials, logs, and history. This presentation does not change the TrainingProfile, session, log, load, event, or Task contracts.
 
 The Learning declarations in `src/learning.js` depend on Core declarations including `Store`, `EventBus`, the shared planning-date assertion, and `ModuleRegistry`. The Learning layer performs the existing Roadmap validation and reconciliation, then registers `LearningModule` before the following School layer loads. It refreshes its own view after UI actions and relies on shared task events for Today. Conversely, School and other later UI code use `escapeHtml` and `escapeAttr` from Learning, while migration 5 and backup code use LessonGuide validation and Roadmap declarations.
 
-The School declarations in `src/school.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, the shared civil date helpers, and `ModuleRegistry`, and on Learning's `escapeHtml` and `escapeAttr`. During loading the layer initializes its constants and registers `SchoolModule`; Store access and rendering remain deferred until later application initialization or user interaction. School refreshes its own view after UI actions and relies on shared task events for Today. Backup uses Core's calendar-date validator plus School's `validateSchoolItem` and `validateLesson` in cross-domain validation.
+The School declarations in `src/school.js` depend on Core declarations including `Store`, `EventBus`, `localDateKey`, the shared civil date helpers, and `ModuleRegistry`, and on Learning's `escapeHtml` and `escapeAttr`. During loading the layer initializes its constants and registers `SchoolModule`; Store access and rendering remain deferred until later application initialization or user interaction. School refreshes its own view after UI actions and relies on shared task events for Today. Backup uses Core's calendar-date validator plus School's `validateSchoolItem` and `validateLesson` in cross-domain validation. Its product renderer orders overview, urgent work, remaining deadlines, and the preserved lesson plan before collapsed creation forms. Numeric Task priority remains internal, all controls have explicit labels, and vacation mode keeps its existing visibility and workload semantics without deleting or rewriting data.
 
 The Availability declarations in `src/availability.js` depend on Core's `Store`, `EventBus`, shared calendar-date and weekday helpers; Learning's escaping helpers; and School's clock-time validator. AvailabilityEngine is deliberately not a Module: it does not register with ModuleRegistry, create Tasks, read `school:*`, or alter PriorityEngine, DecisionEngine, or the manual 30/60/150-minute budgets. It stores one atomic `availability:configuration` value, where `null` is unconfigured, and reports nominal local minutes from weekly free-time intervals or a date exception that replaces the whole weekly day. PlanDay consumes that public result, and Today rerenders after `availability:changed`. Loading the layer only defines declarations; Store and DOM access remain deferred to calls and application initialization.
 
@@ -116,7 +116,7 @@ The Backup declarations in `src/backup.js` depend on Core's `Store`, `createMemo
 
 ### Training
 
-The Training module manages a validated profile, generated plan, session state, exercise logs, completion status, and a temporary training-load calculation used by the daily energy model. `getTasks(date)` derives weekday and session ID only from that date and emits tasks at priority `30` with `planningClass: 'scheduled'`.
+The Training module manages a validated profile, generated plan, session state, exercise logs, completion status, and a temporary training-load calculation used by the daily energy model. `getTasks(date)` derives weekday and session ID only from that date and emits tasks at priority `30` with `planningClass: 'scheduled'`. The view makes today's scheduled session, progress, status, and honest primary action dominant. On a rest day it identifies the next existing plan session without creating a new task or status. The weekly plan remains available below as native day and exercise disclosures containing the existing technique, warm-up, progression, safety, verified material, per-measurement log fields, personal record, and eight-entry history projection. Profile weekday selection is displayed Monday through Sunday while retaining the stored `0..6` representation.
 
 ### IT learning
 
@@ -124,7 +124,7 @@ The IT learning module manages roadmap stage statuses, criterion progress, and L
 
 ### School
 
-The School module manages school items, the lesson schedule, workload, and school-year/vacation behavior. School items calculate urgency against the explicit planning date: overdue/today is priority `25`, tomorrow `28`, up to three days is capped at `35`, and base type priorities are `32/34/36/38/42/44/48`. Overdue, today, and tomorrow are `urgent`; other School tasks are `flexible`.
+The School module manages school items, the lesson schedule, workload, and school-year/vacation behavior. School items calculate urgency against the explicit planning date: overdue/today is priority `25`, tomorrow `28`, up to three days is capped at `35`, and base type priorities are `32/34/36/38/42/44/48`. Overdue, today, and tomorrow are `urgent`; other School tasks are `flexible`. Those numbers remain an internal deterministic Task contract and are not displayed in the School product view. The renderer derives user-facing deadline labels and counts without changing the projection, shows urgent open items once before the remaining list, preserves access to completed, skipped, and vacation-sleeping records, and shows the stored schedule before the collapsed labelled item and lesson forms.
 
 ### English
 
@@ -250,7 +250,7 @@ If commit fails, rollback continues across all namespaces even if one restoratio
 - `__proto__`, `constructor`, and `prototype` keys are rejected recursively.
 - Every imported namespace has a domain validator.
 - Current-version roadmap state must be complete and internally consistent.
-- User-controlled values in the PlanDay-powered Today view are inserted with `textContent` or text nodes; legacy views retain their established escaping before HTML interpolation.
+- User-controlled values in the PlanDay-powered Today view are inserted with `textContent` or text nodes. Product Training and School views escape profile, task, note, lesson, identifier, and history values before HTML interpolation; remaining legacy views retain their established escaping.
 - Resource URLs are restricted to HTTP and HTTPS.
 - Private user data and backup files are excluded from the public repository.
 
@@ -278,8 +278,8 @@ The suite is divided into explicit regression layers:
 
 1. startup, static shell structure, Product UI navigation and drawer behavior, Core, Store, EventBus, and MemoryStore;
 2. schema migrations and recovery behavior;
-3. module contracts, compatibility decisions, Day/Habits, Training, Learning/LessonGuide, School, Availability, English, pure PlanDay algorithms, production Today integration, and all Product UI Today states;
-4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering.
+3. module contracts, compatibility decisions, Day/Habits, Training, Learning/LessonGuide, School, Availability, English, pure PlanDay algorithms, production Today integration, Product UI Today, Training, and School states, hierarchy, disclosures, labels, and interactions;
+4. backup export, parsing, preview, staging, Replace commit, rollback, file APIs, URL validation, and untrusted DOM rendering across the product domain views.
 
 `npm test` runs all layers once. `npm run check` first validates the production resource wiring and compiles the real `src/core.js`, `src/today.js`, `src/training.js`, `src/learning.js`, `src/school.js`, `src/availability.js`, `src/english.js`, `src/plan-day.js`, `src/backup.js`, and `src/app.js` without executing them, then runs the complete suite. `npm run test:watch` watches test files, helpers, `index.html`, and the complete `src/` tree, terminating the previous test process before a restart.
 
@@ -297,6 +297,6 @@ JSDOM validates DOM structure and controlled browser-API contracts, but it does 
 - Tests use the native Node.js runner and JSDOM rather than a browser automation framework.
 - Data remains tied to the current browser unless manually exported and imported.
 - There is no backend, login, synchronization, mobile app, full analytics engine, or background AI.
-- Product UI v1 is complete through Step 11.4B2 only; domain views, settings, and final cross-view accessibility remain bounded later steps.
+- Product UI v1 is implemented through Step 11.4B3 and awaits independent audit; Learning, English, settings, and final cross-view accessibility remain bounded later steps.
 
 Architectural changes, schema changes, and new modules require a separate bounded step, migration analysis where applicable, regression tests, and independent review before commit.

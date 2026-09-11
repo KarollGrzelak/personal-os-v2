@@ -92,6 +92,39 @@ function validateSchoolItem(raw) {
 }
 
 const SCHOOL_TASK_TITLE_MAX_LENGTH = 300;
+const SCHOOL_WEEKDAY_LABELS = ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'];
+const SCHOOL_DIFFICULTY_LABELS = {
+  1: 'Bardzo łatwe',
+  2: 'Łatwe',
+  3: 'Umiarkowane',
+  4: 'Wymagające',
+  5: 'Bardzo wymagające'
+};
+const SCHOOL_COLLECTION_VISIBLE_LIMIT = 8;
+
+function schoolItemVisibleInMode(item, mode) {
+  if (mode !== 'vacation') return true;
+  if (item.dueDate) return true;
+  return !!item.activeDuringVacation;
+}
+
+function schoolDuePresentation(item, date) {
+  const daysLeft = daysUntil(item.dueDate, date);
+  if (daysLeft === null) return { kind: 'none', label: 'Bez terminu' };
+  if (daysLeft < 0) {
+    const overdueDays = Math.abs(daysLeft);
+    return { kind: 'overdue', label: `Po terminie o ${overdueDays} ${overdueDays === 1 ? 'dzień' : 'dni'}` };
+  }
+  if (daysLeft === 0) return { kind: 'today', label: 'Termin dzisiaj' };
+  if (daysLeft === 1) return { kind: 'tomorrow', label: 'Termin jutro' };
+  return { kind: daysLeft <= 3 ? 'soon' : 'future', label: `Termin za ${daysLeft} dni` };
+}
+
+function schoolStatusLabel(status) {
+  if (status === 'done') return 'Ukończone';
+  if (status === 'skipped') return 'Pominięte';
+  return 'Do zrobienia';
+}
 
 function schoolTaskTitle(item) {
   const fullTitle = `${SCHOOL_TYPE_LABELS[item.type]}: ${item.subject} — ${item.title}`;
@@ -330,152 +363,264 @@ const SchoolModule = {
   render(container) {
     const mode = this.getMode();
     const today = localDateKey();
-    container.innerHTML = `
-      <div class="card">
-        <h3>🎓 Szkoła</h3>
-        <div class="field-row" style="margin-bottom:14px;">
-          <button class="ghost mode-btn" data-mode="school_year">Rok szkolny</button>
-          <button class="ghost mode-btn" data-mode="vacation">Wakacje</button>
-          <span class="badge ${mode === 'vacation' ? 'warn' : 'ok'}">${mode === 'vacation' ? 'Tryb wakacyjny — plan lekcji wyłączony, wybrane zadania pozostają aktywne' : 'Tryb roku szkolnego'}</span>
-        </div>
-        <div class="tabs" id="school-tabs">
-          <button class="ghost school-tab" data-tab="items">Zadania i terminy</button>
-          <button class="ghost school-tab" data-tab="schedule">Plan lekcji</button>
-        </div>
-        <div id="school-content"></div>
-      </div>
-    `;
+    const items = this.getItems().slice().sort((a, b) => (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99'));
+    const schedule = this.getSchedule().slice().sort((a, b) => a.weekday - b.weekday || a.startTime.localeCompare(b.startTime));
+    const visibleItems = items.filter(item => schoolItemVisibleInMode(item, mode));
+    const openVisibleItems = visibleItems.filter(item => item.status === 'todo');
+    const urgentItems = openVisibleItems.filter(item => {
+      const left = daysUntil(item.dueDate, today);
+      return left !== null && left <= 1;
+    });
+    const urgentIds = new Set(urgentItems.map(item => item.id));
+    const remainingItems = items.filter(item => !urgentIds.has(item.id));
+    const todayWeekday = new Date().getDay();
+    const lessonsToday = mode === 'vacation' ? [] : schedule.filter(lesson => lesson.weekday === todayWeekday);
+    const overdueCount = urgentItems.filter(item => daysUntil(item.dueDate, today) < 0).length;
+    const sleepingVacationCount = mode === 'vacation'
+      ? items.filter(item => !schoolItemVisibleInMode(item, mode)).length
+      : 0;
+    const loadLevel = this.getTodayLoadLevel();
 
-    container.querySelectorAll('.mode-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.mode === mode);
-      btn.addEventListener('click', () => { this.setMode(btn.dataset.mode); this.render(container); });
+    const renderSchoolItem = item => {
+      const itemIndex = items.indexOf(item);
+      const controlId = `school-item-status-${itemIndex}`;
+      const due = schoolDuePresentation(item, today);
+      const sleeping = mode === 'vacation' && !schoolItemVisibleInMode(item, mode);
+      const status = schoolStatusLabel(item.status);
+      const statusClass = item.status === 'done' ? 'ok' : due.kind === 'overdue' || due.kind === 'today' || due.kind === 'tomorrow' ? 'warn' : '';
+      const difficulty = SCHOOL_DIFFICULTY_LABELS[item.difficulty] || 'Trudność nieznana';
+      return `
+        <article class="school-task ${item.status === 'done' ? 'done' : ''} ${sleeping ? 'sleeping' : ''}" data-school-item="${escapeAttr(item.id)}">
+          <div class="school-task-status-control">
+            <input type="checkbox" class="cb si-cb" id="${controlId}" data-id="${escapeAttr(item.id)}" ${item.status === 'done' ? 'checked' : ''}>
+            <label class="sr-only" for="${controlId}">Oznacz jako ${item.status === 'done' ? 'do zrobienia' : 'ukończone'}: ${escapeHtml(item.title)}</label>
+          </div>
+          <div class="school-task-body">
+            <div class="school-task-heading">
+              <div>
+                <span class="school-task-type">${escapeHtml(SCHOOL_TYPE_LABELS[item.type] || 'Element szkolny')}</span>
+                <h3>${escapeHtml(item.subject)} — ${escapeHtml(item.title)}</h3>
+              </div>
+              <span class="badge ${statusClass}">${escapeHtml(status)}</span>
+            </div>
+            <div class="school-task-meta">
+              <span class="school-due school-due-${due.kind}">${escapeHtml(due.label)}${item.dueDate ? ` · ${escapeHtml(item.dueDate)}` : ''}</span>
+              <span>${escapeHtml(item.estimatedMinutes)} min</span>
+              <span>${escapeHtml(difficulty)}</span>
+              ${sleeping ? '<span>Uśpione w trybie wakacyjnym</span>' : !item.dueDate && item.activeDuringVacation ? '<span>Aktywne także w wakacje</span>' : ''}
+            </div>
+            ${item.notes ? `<p class="school-task-notes">${escapeHtml(item.notes)}</p>` : ''}
+          </div>
+          <button type="button" class="mini-btn si-del" data-id="${escapeAttr(item.id)}" aria-label="Usuń zadanie: ${escapeAttr(item.title)}">Usuń</button>
+        </article>`;
+    };
+
+    const renderLesson = lesson => `
+      <article class="school-lesson" data-school-lesson="${escapeAttr(lesson.id)}">
+        <div>
+          <span class="school-lesson-day">${escapeHtml(SCHOOL_WEEKDAY_LABELS[lesson.weekday] || 'Nieznany dzień')}</span>
+          <strong>${escapeHtml(lesson.subject)}</strong>
+        </div>
+        <time>${escapeHtml(lesson.startTime)}–${escapeHtml(lesson.endTime)}</time>
+        <button type="button" class="mini-btn lsn-del" data-id="${escapeAttr(lesson.id)}" aria-label="Usuń lekcję: ${escapeAttr(lesson.subject)}, ${escapeAttr(SCHOOL_WEEKDAY_LABELS[lesson.weekday] || 'nieznany dzień')}">Usuń</button>
+      </article>`;
+
+    const renderProgressiveCollection = (records, renderRecord, emptyMessage, collectionName, moreLabel) => {
+      if (!records.length) return `<p class="school-empty">${emptyMessage}</p>`;
+      const visibleRecords = records.slice(0, SCHOOL_COLLECTION_VISIBLE_LIMIT);
+      const hiddenRecords = records.slice(SCHOOL_COLLECTION_VISIBLE_LIMIT);
+      return `
+        ${visibleRecords.map(renderRecord).join('')}
+        ${hiddenRecords.length ? `
+          <details class="school-more" data-school-collection="${collectionName}">
+            <summary>${moreLabel} (${hiddenRecords.length})</summary>
+            <div class="school-more-body">${hiddenRecords.map(renderRecord).join('')}</div>
+          </details>` : ''}`;
+    };
+
+    container.innerHTML = `
+      <div class="school-product-layout">
+        <section class="card school-overview" id="school-overview" aria-labelledby="school-overview-title">
+          <div class="school-section-heading">
+            <div>
+              <p class="school-eyebrow">Najpierw sprawdź sytuację</p>
+              <h2 id="school-overview-title" tabindex="-1">Przegląd szkoły</h2>
+            </div>
+            <span class="badge ${mode === 'vacation' ? 'warn' : 'ok'}">${mode === 'vacation' ? 'Tryb wakacyjny' : 'Rok szkolny'}</span>
+          </div>
+          <div class="school-overview-grid">
+            <div><strong>${openVisibleItems.length}</strong><span>aktywnych zadań</span></div>
+            <div><strong>${urgentItems.length}</strong><span>wymaga uwagi teraz</span></div>
+            <div><strong>${lessonsToday.length}</strong><span>${mode === 'vacation' ? 'lekcji liczonych dziś' : 'lekcji dzisiaj'}</span></div>
+          </div>
+          <div class="school-mode-control" role="group" aria-label="Tryb szkoły">
+            <span>Aktualny tryb</span>
+            <div>
+              <button type="button" class="ghost mode-btn" data-mode="school_year" aria-pressed="${mode === 'school_year'}">Rok szkolny</button>
+              <button type="button" class="ghost mode-btn" data-mode="vacation" aria-pressed="${mode === 'vacation'}">Wakacje</button>
+            </div>
+          </div>
+          ${mode === 'vacation' ? `<p class="school-mode-note">Plan lekcji nie zwiększa dziś obciążenia. Zadania z terminem oraz materiały oznaczone jako aktywne w wakacje pozostają widoczne. ${sleepingVacationCount ? `${sleepingVacationCount} ${sleepingVacationCount === 1 ? 'element jest uśpiony' : 'elementy są uśpione'}.` : ''}</p>` : ''}
+          ${loadLevel === 'high' ? `<div class="banner-warn" role="status"><strong>Duże obciążenie szkolne</strong> Zacznij od pilnych terminów i zaplanuj realne przerwy.</div>` : ''}
+        </section>
+
+        <section class="card school-urgent" id="school-urgent" aria-labelledby="school-urgent-title">
+          <div class="school-section-heading">
+            <div>
+              <p class="school-eyebrow">Do działania</p>
+              <h2 id="school-urgent-title" tabindex="-1">Pilne zadania</h2>
+            </div>
+            ${overdueCount ? `<span class="badge warn">${overdueCount} po terminie</span>` : ''}
+          </div>
+          <div class="school-task-list">${renderProgressiveCollection(urgentItems, renderSchoolItem, 'Nic pilnego. Możesz spokojnie przejść do dalszych terminów.', 'urgent', 'Pozostałe pilne zadania')}</div>
+        </section>
+
+        <section class="card school-deadlines" id="school-deadlines" aria-labelledby="school-deadlines-title">
+          <div class="school-section-heading">
+            <div>
+              <p class="school-eyebrow">Po pilnych</p>
+              <h2 id="school-deadlines-title" tabindex="-1">Pozostałe terminy i zadania</h2>
+            </div>
+            <span class="school-section-count">${remainingItems.length} ${remainingItems.length === 1 ? 'element' : 'elementów'}</span>
+          </div>
+          <div class="school-task-list">${renderProgressiveCollection(remainingItems, renderSchoolItem, 'Brak pozostałych zadań szkolnych.', 'deadlines', 'Pozostałe zadania i terminy')}</div>
+        </section>
+
+        <section class="card school-schedule" id="school-schedule" aria-labelledby="school-schedule-title">
+          <div class="school-section-heading">
+            <div>
+              <p class="school-eyebrow">Stały rytm tygodnia</p>
+              <h2 id="school-schedule-title" tabindex="-1">Plan lekcji</h2>
+            </div>
+            <span class="school-section-count">${schedule.length} ${schedule.length === 1 ? 'lekcja' : 'lekcji'}</span>
+          </div>
+          ${mode === 'vacation' ? '<p class="school-schedule-note">W trybie wakacyjnym plan jest zachowany, ale nie obciąża bieżącego dnia.</p>' : ''}
+          <div class="school-lesson-list">${renderProgressiveCollection(schedule, renderLesson, 'Plan lekcji jest pusty.', 'schedule', 'Pozostałe lekcje')}</div>
+        </section>
+
+        <details class="card school-create-panel" id="school-add-item">
+          <summary><span><strong>Dodaj zadanie lub termin</strong><small>Praca domowa, sprawdzian, projekt albo materiał</small></span></summary>
+          <form class="school-form" id="school-item-form" aria-describedby="si-errors">
+            <div class="school-form-field"><label for="si-type">Rodzaj zadania</label><select id="si-type">${SCHOOL_ALLOWED_TYPES.map(type => `<option value="${type}">${SCHOOL_TYPE_LABELS[type]}</option>`).join('')}</select></div>
+            <div class="school-form-field"><label for="si-subject">Przedmiot</label><input type="text" id="si-subject" placeholder="np. matematyka"></div>
+            <div class="school-form-field school-form-wide"><label for="si-title">Tytuł lub opis zadania</label><input type="text" id="si-title" placeholder="np. zadania 1–5 ze strony 42"></div>
+            <div class="school-form-field"><label for="si-due">Termin wykonania (opcjonalnie)</label><input type="date" id="si-due"></div>
+            <div class="school-form-field"><label for="si-minutes">Szacowany czas w minutach</label><input type="number" min="5" max="600" id="si-minutes" placeholder="np. 45"></div>
+            <div class="school-form-field"><label for="si-difficulty">Trudność</label><select id="si-difficulty">${[1,2,3,4,5].map(value => `<option value="${value}">${SCHOOL_DIFFICULTY_LABELS[value]}</option>`).join('')}</select></div>
+            <div class="school-form-field school-form-wide"><label for="si-notes">Notatki (opcjonalnie)</label><textarea id="si-notes" rows="3" placeholder="Materiały, zakres albo ważna wskazówka"></textarea></div>
+            <label class="school-checkbox-field school-form-wide" for="si-active-vacation"><input type="checkbox" id="si-active-vacation"><span>Aktywne także w wakacje — dotyczy elementów bez terminu</span></label>
+            <div class="school-form-actions school-form-wide"><button type="submit" class="primary" id="si-add">Dodaj zadanie</button></div>
+            <div class="log-errors school-form-wide" id="si-errors" role="alert" aria-live="polite" hidden></div>
+          </form>
+        </details>
+
+        <details class="card school-create-panel" id="school-add-lesson">
+          <summary><span><strong>Dodaj lekcję do planu</strong><small>Plan tygodniowy szkoły</small></span></summary>
+          <form class="school-form" id="school-lesson-form" aria-describedby="lsn-errors">
+            <div class="school-form-field"><label for="lsn-weekday">Dzień tygodnia</label><select id="lsn-weekday">${[1,2,3,4,5].map(day => `<option value="${day}">${SCHOOL_WEEKDAY_LABELS[day]}</option>`).join('')}</select></div>
+            <div class="school-form-field"><label for="lsn-subject">Przedmiot lekcji</label><input type="text" id="lsn-subject" placeholder="np. język polski"></div>
+            <div class="school-form-field"><label for="lsn-start">Godzina rozpoczęcia</label><input type="time" id="lsn-start"></div>
+            <div class="school-form-field"><label for="lsn-end">Godzina zakończenia</label><input type="time" id="lsn-end"></div>
+            <div class="school-form-actions school-form-wide"><button type="submit" class="primary" id="lsn-add">Dodaj lekcję</button></div>
+            <div class="log-errors school-form-wide" id="lsn-errors" role="alert" aria-live="polite" hidden></div>
+          </form>
+        </details>
+      </div>`;
+
+    const focusSchoolSection = sectionId => {
+      const heading = container.querySelector(`#${sectionId} h2`);
+      heading?.focus();
+      return document.activeElement === heading;
+    };
+    const focusSchoolItem = itemId => {
+      const itemElement = [...container.querySelectorAll('[data-school-item]')]
+        .find(element => element.dataset.schoolItem === itemId);
+      if (!itemElement) return false;
+      const disclosure = itemElement.closest('.school-more');
+      if (disclosure) disclosure.open = true;
+      const control = itemElement.querySelector('.si-cb');
+      control?.focus();
+      return document.activeElement === control;
+    };
+
+    container.querySelectorAll('.mode-btn').forEach(button => {
+      button.classList.toggle('active', button.dataset.mode === mode);
+      button.addEventListener('click', () => {
+        const nextMode = button.dataset.mode;
+        this.setMode(nextMode);
+        this.render(container);
+        [...container.querySelectorAll('.mode-btn')]
+          .find(candidate => candidate.dataset.mode === nextMode)?.focus();
+      });
     });
 
-    const contentEl = container.querySelector('#school-content');
-    const tabsEl = container.querySelector('#school-tabs');
-
-    const renderItemsTab = () => {
-      const items = this.getItems().slice().sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
-      contentEl.innerHTML = `
-        <div class="profile-form" style="margin-bottom:14px;">
-          <div class="field-row">
-            <select id="si-type">${SCHOOL_ALLOWED_TYPES.map(t => `<option value="${t}">${SCHOOL_TYPE_LABELS[t]}</option>`).join('')}</select>
-            <input type="text" id="si-subject" placeholder="przedmiot" style="width:120px;">
-            <input type="text" id="si-title" placeholder="tytuł/opis" style="width:160px;">
-          </div>
-          <div class="field-row">
-            <input type="date" id="si-due">
-            <input type="number" id="si-minutes" placeholder="czas (min)" style="width:110px;">
-            <select id="si-difficulty">${[1,2,3,4,5].map(n => `<option value="${n}">trudność ${n}</option>`).join('')}</select>
-            <button class="ghost" id="si-add">+ dodaj</button>
-          </div>
-          <div class="field-row">
-            <label style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:6px;">
-              <input type="checkbox" id="si-active-vacation">
-              aktywne w wakacjach (dotyczy tylko elementów bez terminu)
-            </label>
-          </div>
-          <div class="log-errors" id="si-errors" style="display:none;color:#f87171;font-size:12px;margin-top:6px;"></div>
-        </div>
-        <div id="si-list"></div>
-      `;
-      const listEl = contentEl.querySelector('#si-list');
-      const renderList = () => {
-        const current = this.getItems().slice().sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
-        listEl.innerHTML = current.map(i => {
-          const dl = daysUntil(i.dueDate, today);
-          const dueLabel = i.dueDate ? `${i.dueDate}${dl != null ? ` (${dl <= 0 ? 'dziś/po terminie' : 'za ' + dl + ' dni'})` : ''}` : 'brak terminu';
-          const vacationLabel = !i.dueDate ? (i.activeDuringVacation ? ', aktywne w wakacje' : ', uśpione w wakacje') : '';
-          return `
-          <div class="item ${i.status === 'done' ? 'done' : ''}">
-            <input type="checkbox" class="cb si-cb" data-id="${escapeAttr(i.id)}" ${i.status === 'done' ? 'checked' : ''}>
-            <label>${SCHOOL_TYPE_LABELS[i.type]}: <b>${escapeHtml(i.subject)}</b> — ${escapeHtml(i.title)} <span class="pillar-tag">(${dueLabel}${vacationLabel}, priorytet ${computeSchoolPriority(i, mode, today)})</span></label>
-            <button class="mini-btn si-del" data-id="${escapeAttr(i.id)}">usuń</button>
-          </div>`;
-        }).join('') || '<p style="color:var(--text3);font-size:12px;">Brak zadań szkolnych.</p>';
-
-        listEl.querySelectorAll('.si-cb').forEach(cb => cb.addEventListener('change', () => {
-          this.setTaskStatus(cb.dataset.id, cb.checked ? 'done' : 'todo');
-          renderList();
-        }));
-        listEl.querySelectorAll('.si-del').forEach(btn => btn.addEventListener('click', () => {
-          if (!confirm('Usunąć to zadanie szkolne?')) return;
-          this.deleteItem(btn.dataset.id);
-          renderList();
-        }));
-      };
-      renderList();
-
-      contentEl.querySelector('#si-add').addEventListener('click', () => {
-        const raw = {
-          type: contentEl.querySelector('#si-type').value,
-          subject: contentEl.querySelector('#si-subject').value,
-          title: contentEl.querySelector('#si-title').value,
-          dueDate: contentEl.querySelector('#si-due').value,
-          estimatedMinutes: contentEl.querySelector('#si-minutes').value,
-          difficulty: contentEl.querySelector('#si-difficulty').value,
-          activeDuringVacation: contentEl.querySelector('#si-active-vacation').checked
-        };
-        const result = this.addItem(raw);
-        const errEl = contentEl.querySelector('#si-errors');
-        if (!result.ok) { errEl.style.display = 'block'; errEl.textContent = result.errors.join(' · '); return; }
-        errEl.style.display = 'none';
-        renderList();
+    container.querySelectorAll('.si-cb').forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        const itemId = checkbox.dataset.id;
+        this.setTaskStatus(itemId, checkbox.checked ? 'done' : 'todo');
+        this.render(container);
+        if (!focusSchoolItem(itemId)) focusSchoolSection('school-deadlines');
       });
-    };
-
-    const renderScheduleTab = () => {
-      const DAY_NAMES = ['Niedziela','Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota'];
-      const schedule = this.getSchedule().slice().sort((a, b) => a.weekday - b.weekday || a.startTime.localeCompare(b.startTime));
-      contentEl.innerHTML = `
-        <div class="profile-form" style="margin-bottom:14px;">
-          <div class="field-row">
-            <select id="lsn-weekday">${[1,2,3,4,5].map(d => `<option value="${d}">${DAY_NAMES[d]}</option>`).join('')}</select>
-            <input type="text" id="lsn-subject" placeholder="przedmiot" style="width:140px;">
-            <input type="time" id="lsn-start">
-            <input type="time" id="lsn-end">
-            <button class="ghost" id="lsn-add">+ dodaj</button>
-          </div>
-          <div class="log-errors" id="lsn-errors" style="display:none;color:#f87171;font-size:12px;margin-top:6px;"></div>
-        </div>
-        <div id="lsn-list"></div>
-      `;
-      const listEl = contentEl.querySelector('#lsn-list');
-      const renderList = () => {
-        const current = this.getSchedule().slice().sort((a, b) => a.weekday - b.weekday || a.startTime.localeCompare(b.startTime));
-        listEl.innerHTML = current.map(l => `
-          <div class="item">
-            <label style="flex:1;">${DAY_NAMES[l.weekday]}: <b>${escapeHtml(l.subject)}</b> ${l.startTime}–${l.endTime}</label>
-            <button class="mini-btn lsn-del" data-id="${escapeAttr(l.id)}">usuń</button>
-          </div>
-        `).join('') || '<p style="color:var(--text3);font-size:12px;">Brak zaplanowanych lekcji.</p>';
-        listEl.querySelectorAll('.lsn-del').forEach(btn => btn.addEventListener('click', () => { this.deleteLesson(btn.dataset.id); renderList(); }));
-      };
-      renderList();
-
-      contentEl.querySelector('#lsn-add').addEventListener('click', () => {
-        const raw = {
-          weekday: contentEl.querySelector('#lsn-weekday').value,
-          subject: contentEl.querySelector('#lsn-subject').value,
-          startTime: contentEl.querySelector('#lsn-start').value,
-          endTime: contentEl.querySelector('#lsn-end').value
-        };
-        const result = this.addLesson(raw);
-        const errEl = contentEl.querySelector('#lsn-errors');
-        if (!result.ok) { errEl.style.display = 'block'; errEl.textContent = result.errors.join(' · '); return; }
-        errEl.style.display = 'none';
-        renderList();
+    });
+    container.querySelectorAll('.si-del').forEach(button => {
+      button.addEventListener('click', () => {
+        if (!confirm('Usunąć to zadanie szkolne?')) return;
+        const sectionId = button.closest('section')?.id || 'school-deadlines';
+        this.deleteItem(button.dataset.id);
+        this.render(container);
+        focusSchoolSection(sectionId);
       });
-    };
+    });
+    container.querySelectorAll('.lsn-del').forEach(button => {
+      button.addEventListener('click', () => {
+        this.deleteLesson(button.dataset.id);
+        this.render(container);
+        focusSchoolSection('school-schedule');
+      });
+    });
 
-    let activeTab = 'items';
-    function selectTab(tab) {
-      activeTab = tab;
-      tabsEl.querySelectorAll('.school-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-      if (tab === 'items') renderItemsTab(); else renderScheduleTab();
-    }
-    tabsEl.querySelectorAll('.school-tab').forEach(btn => btn.addEventListener('click', () => selectTab(btn.dataset.tab)));
-    selectTab('items');
+    const itemForm = container.querySelector('#school-item-form');
+    itemForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const result = this.addItem({
+        type: itemForm.querySelector('#si-type').value,
+        subject: itemForm.querySelector('#si-subject').value,
+        title: itemForm.querySelector('#si-title').value,
+        dueDate: itemForm.querySelector('#si-due').value,
+        estimatedMinutes: itemForm.querySelector('#si-minutes').value,
+        difficulty: itemForm.querySelector('#si-difficulty').value,
+        notes: itemForm.querySelector('#si-notes').value,
+        activeDuringVacation: itemForm.querySelector('#si-active-vacation').checked
+      });
+      if (!result.ok) {
+        const errorElement = itemForm.querySelector('#si-errors');
+        errorElement.hidden = false;
+        errorElement.textContent = result.errors.join(' · ');
+        return;
+      }
+      const createdItemId = this.getItems().at(-1)?.id;
+      this.render(container);
+      if (!focusSchoolItem(createdItemId)) focusSchoolSection('school-deadlines');
+    });
+
+    const lessonForm = container.querySelector('#school-lesson-form');
+    lessonForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const result = this.addLesson({
+        weekday: lessonForm.querySelector('#lsn-weekday').value,
+        subject: lessonForm.querySelector('#lsn-subject').value,
+        startTime: lessonForm.querySelector('#lsn-start').value,
+        endTime: lessonForm.querySelector('#lsn-end').value
+      });
+      if (!result.ok) {
+        const errorElement = lessonForm.querySelector('#lsn-errors');
+        errorElement.hidden = false;
+        errorElement.textContent = result.errors.join(' · ');
+        return;
+      }
+      this.render(container);
+      focusSchoolSection('school-schedule');
+    });
   }
 };
 ModuleRegistry.register(SchoolModule);

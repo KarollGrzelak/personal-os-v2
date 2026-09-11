@@ -228,6 +228,56 @@ test('rzeczywisty DOM LessonGuide ponownie sprawdza URL i nie interpretuje nieza
   assert.match(panel.textContent, /<\/textarea>/);
 });
 
+test('produktowe widoki Trening i Szkoła renderują tekst profilu, zadań, notatek i planu bez interpretacji HTML', async t => {
+  const app = await loadApp({ fixedNow: FIXED_THURSDAY });
+  t.after(() => app.close());
+  const payload = '<img id="synthetic-domain-image" src=x onerror="globalThis.syntheticExecuted=true"><script>globalThis.syntheticExecuted=true</script>';
+  const trainingModule = app.api.ModuleRegistry.get('training');
+  const schoolModule = app.api.ModuleRegistry.get('school');
+  const trainingView = app.document.getElementById('view-training');
+  const schoolView = app.document.getElementById('view-school');
+
+  assert.equal(trainingModule.saveProfile({
+    equipment: ['synthetic hantle'],
+    location: payload,
+    experienceLevel: 'beginner',
+    availableDays: [1, 3, 5],
+    availableMinutesPerSession: 45,
+    mainGoal: payload,
+    limitations: payload,
+    baselineResults: { squatReps: null, pushupReps: null, plankSeconds: null }
+  }).ok, true);
+  assert.equal(schoolModule.addItem({
+    type: 'homework',
+    subject: payload,
+    title: payload,
+    dueDate: '2026-08-20',
+    estimatedMinutes: 30,
+    difficulty: 2,
+    notes: payload,
+    activeDuringVacation: false
+  }).ok, true);
+  assert.equal(schoolModule.addLesson({
+    weekday: 4,
+    subject: payload,
+    startTime: '09:00',
+    endTime: '10:00'
+  }).ok, true);
+
+  trainingModule.render(trainingView);
+  schoolModule.render(schoolView);
+
+  for (const view of [trainingView, schoolView]) {
+    assert.equal(view.querySelector('script, img, svg'), null);
+    assert.equal(view.querySelector('[onerror], [onload], [onclick], [onmouseover]'), null);
+  }
+  assert.equal(app.window.syntheticExecuted, undefined);
+  assert.equal(trainingView.querySelector('#pf-location').value, payload);
+  assert.equal(trainingView.querySelector('#pf-goal').value, payload);
+  assert.equal(trainingView.querySelector('#pf-limits').value, payload);
+  assert.match(schoolView.textContent, /<img id="synthetic-domain-image"/);
+});
+
 test('komunikaty błędów renderują niezaufany HTML wyłącznie jako tekst', async t => {
   const app = await loadApp();
   t.after(() => app.close());

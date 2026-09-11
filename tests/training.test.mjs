@@ -200,3 +200,204 @@ test('Training emituje minimalne tasks:changed tylko gdy mutacja zmienia projekc
     { moduleId: 'training', taskId: 'day-a:2026-08-17', status: 'todo' }
   ]);
 });
+
+test('produktowy Trening eksponuje bieżącą sesję i główną akcję przed planem oraz profilem', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const view = app.document.getElementById('view-training');
+
+  module.render(view);
+
+  const current = view.querySelector('.training-current-session');
+  const plan = view.querySelector('.training-plan-card');
+  const profile = view.querySelector('.training-profile-details');
+  assert.ok(current);
+  assert.ok(plan);
+  assert.ok(profile);
+  assert.equal(
+    current.compareDocumentPosition(plan) & app.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    app.window.Node.DOCUMENT_POSITION_FOLLOWING
+  );
+  assert.equal(
+    plan.compareDocumentPosition(profile) & app.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    app.window.Node.DOCUMENT_POSITION_FOLLOWING
+  );
+  assert.match(current.textContent, /Bieżąca sesja/);
+  assert.match(current.textContent, /Full Body A/);
+  assert.match(current.textContent, /Rozpocznij — pokaż ćwiczenia/);
+
+  const currentDay = view.querySelector('[data-training-day="day-a"]');
+  assert.equal(currentDay.open, false);
+  view.querySelector('#training-main-action').click();
+  assert.equal(currentDay.open, true);
+  assert.equal(app.document.activeElement, currentDay.querySelector(':scope > summary'));
+});
+
+test('plan Treningu używa rozwinięć oraz nazw pomiarów i dni zrozumiałych dla użytkownika', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const view = app.document.getElementById('view-training');
+
+  module.render(view);
+
+  const dayPanels = [...view.querySelectorAll('.training-day-panel')];
+  const exercisePanels = [...view.querySelectorAll('.exercise-card')];
+  assert.equal(dayPanels.length, 4);
+  assert.equal(dayPanels.every(panel => panel.tagName === 'DETAILS'), true);
+  assert.equal(exercisePanels.length > 0, true);
+  assert.equal(exercisePanels.every(panel => panel.tagName === 'DETAILS'), true);
+  assert.match(view.textContent, /Poniedziałek/);
+  assert.match(view.textContent, /Ciężar i powtórzenia/);
+  assert.match(view.textContent, /Powtórzenia z masą ciała/);
+  assert.match(view.textContent, /Czas utrzymania/);
+  assert.match(view.textContent, /Czas mobilności/);
+  assert.doesNotMatch(view.textContent, /weight_reps|bodyweight_reps|\bduration\b|\bmobility\b/);
+
+  const firstExercise = exercisePanels[0];
+  assert.match(firstExercise.textContent, /Cel/);
+  assert.match(firstExercise.textContent, /Rozgrzewka/);
+  assert.match(firstExercise.textContent, /Technika/);
+  assert.match(firstExercise.textContent, /Materiał do techniki/);
+  assert.match(firstExercise.textContent, /Historia ćwiczenia/);
+});
+
+test('formularze profilu i dziennika Treningu mają pełne etykiety, a bezpieczeństwo planu pozostaje widoczne', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const view = app.document.getElementById('view-training');
+  module.saveProfile(trainingProfile({ limitations: 'synthetic ból kolana' }));
+
+  module.render(view);
+
+  assert.match(view.querySelector('.training-alerts').textContent, /nie jest poradą medyczną/i);
+  assert.match(view.querySelector('.training-alerts').textContent, /fizjoterapeutą/i);
+  const controls = [...view.querySelectorAll('#training-profile-form input, #training-profile-form select, #training-profile-form textarea, .log-form input, .log-form select')];
+  assert.equal(controls.length > 0, true);
+  for (const control of controls) {
+    assert.ok(control.id, 'każda kontrolka ma identyfikator');
+    const label = view.querySelector(`label[for="${control.id}"]`);
+    assert.ok(label, `brak etykiety dla ${control.id}`);
+    assert.equal(label.textContent.trim().length > 0, true, `pusta etykieta dla ${control.id}`);
+  }
+  assert.deepEqual(
+    [...view.querySelectorAll('[name="pf-available-day"]')].map(input => input.nextElementSibling.textContent),
+    ['Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota', 'Niedziela']
+  );
+  assert.doesNotMatch(view.querySelector('#training-profile-panel').textContent, /numery 0-6|1=pon/i);
+
+  view.querySelector('#training-profile-form').dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+
+  const restoredProfilePanel = view.querySelector('#training-profile-panel');
+  assert.equal(restoredProfilePanel.open, true);
+  assert.equal(app.document.activeElement, restoredProfilePanel.querySelector(':scope > summary'));
+  assert.notEqual(app.document.activeElement, app.document.body);
+});
+
+test('dziennik w rozwinięciu zapisuje wynik i wraca do tej samej sesji oraz ćwiczenia', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const view = app.document.getElementById('view-training');
+  module.render(view);
+  view.querySelector('#training-main-action').click();
+  const exercise = view.querySelector('[data-training-day="day-a"] [data-ex="squat-goblet"]');
+  exercise.open = true;
+  const form = exercise.querySelector('.log-form');
+  form.querySelector('.lf-sets').value = '3';
+  form.querySelector('.lf-reps').value = '10';
+  form.querySelector('.lf-weight').value = '12';
+  form.querySelector('.lf-rpe').value = '7';
+
+  form.dispatchEvent(new app.window.Event('submit', { bubbles: true, cancelable: true }));
+
+  assert.equal(module.getExerciseHistory('squat-goblet').length, 1);
+  assert.equal(view.querySelector('[data-training-day="day-a"]').open, true);
+  assert.equal(view.querySelector('[data-training-day="day-a"] [data-ex="squat-goblet"]').open, true);
+  const history = view.querySelector('[data-ex="squat-goblet"] .training-history');
+  assert.equal(history.open, true);
+  assert.match(history.textContent, /2026-08-17/);
+  assert.equal(app.document.activeElement, history.querySelector(':scope > summary'));
+  assert.notEqual(app.document.activeElement, app.document.body);
+});
+
+test('finish, skip i undo sesji Treningu przywracają fokus do właściwej nowej akcji', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const view = app.document.getElementById('view-training');
+  module.render(view);
+
+  app.dialogs.enqueueConfirm(true);
+  view.querySelector('#finish-day').click();
+
+  assert.equal(module.getTasks('2026-08-17')[0].sessionStatus, 'partial');
+  assert.equal(app.document.activeElement, view.querySelector('#finish-day'));
+  assert.notEqual(app.document.activeElement, app.document.body);
+
+  view.querySelector('#skip-day').click();
+
+  assert.equal(module.getTasks('2026-08-17')[0].sessionStatus, 'skipped');
+  assert.equal(app.document.activeElement, view.querySelector('#undo-day'));
+  assert.notEqual(app.document.activeElement, app.document.body);
+
+  view.querySelector('#undo-day').click();
+
+  assert.equal(module.getTasks('2026-08-17')[0].sessionStatus, 'planned');
+  assert.equal(app.document.activeElement, view.querySelector('#training-main-action'));
+  assert.notEqual(app.document.activeElement, app.document.body);
+});
+
+test('12 wpisów historii Treningu ujawnia 8 najnowszych i wszystkie starsze bez efektów ubocznych', async t => {
+  const app = await loadApp({ fixedNow: FIXED_MONDAY });
+  t.after(() => app.close());
+  const module = training(app.api);
+  const view = app.document.getElementById('view-training');
+  for (let day = 1; day <= 12; day++) {
+    const date = `2026-08-${String(day).padStart(2, '0')}`;
+    assert.equal(module.upsertExerciseLog('squat-goblet', date, {
+      sets: 3,
+      reps: 10,
+      weight: day,
+      rpe: 6
+    }).ok, true);
+  }
+  module.render(view);
+  const history = view.querySelector('[data-ex="squat-goblet"] .training-history');
+  const more = history.querySelector('.training-history-more');
+  const stateBefore = {
+    logs: toPlain(app.api.Store.get('training:exerciseLogs', {})),
+    sessions: toPlain(app.api.Store.get('training:sessions', {})),
+    days: toPlain(app.api.Store.get('dayRecords', {}))
+  };
+  const observedEvents = [];
+  ['store:change', 'training:log', 'tasks:changed', 'task:status'].forEach(type => {
+    app.api.EventBus.on(type, payload => observedEvents.push({ type, payload: toPlain(payload) }));
+  });
+  app.storageControl.reset();
+
+  history.querySelector(':scope > summary').click();
+
+  assert.equal(history.open, true);
+  assert.equal(history.querySelectorAll(':scope > .training-history-body > .history-row').length, 8);
+  assert.equal(more.open, false);
+  assert.equal(more.querySelectorAll('.history-row').length, 4);
+  const orderBefore = [...history.querySelectorAll('.history-row')].map(row => row.firstElementChild.textContent);
+
+  more.querySelector(':scope > summary').click();
+
+  assert.equal(more.open, true);
+  assert.equal(history.querySelectorAll('.history-row').length, 12);
+  assert.equal(history.querySelectorAll('.edit-log').length, 12);
+  assert.equal(history.querySelectorAll('.del-log').length, 12);
+  assert.deepEqual([...history.querySelectorAll('.history-row')].map(row => row.firstElementChild.textContent), orderBefore);
+  assert.deepEqual({
+    logs: toPlain(app.api.Store.get('training:exerciseLogs', {})),
+    sessions: toPlain(app.api.Store.get('training:sessions', {})),
+    days: toPlain(app.api.Store.get('dayRecords', {}))
+  }, stateBefore);
+  assert.deepEqual(app.storageControl.attempts, []);
+  assert.deepEqual(observedEvents, []);
+});
